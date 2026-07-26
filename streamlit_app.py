@@ -8,8 +8,12 @@ import os
 
 import requests
 import streamlit as st
+from dotenv import load_dotenv
+
+load_dotenv()
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:8000")
+API_KEY = os.environ.get("API_KEY", "")
 
 st.set_page_config(page_title="Research Agent", page_icon="🔎")
 st.title("Self-Correcting Research Agent")
@@ -29,7 +33,10 @@ if st.button("Run research", type="primary") and query.strip():
     with st.spinner("Searching, drafting, and self-critiquing..."):
         try:
             resp = requests.post(
-                f"{BACKEND_URL}/research", json={"query": query}, timeout=240
+                f"{BACKEND_URL}/research",
+                json={"query": query},
+                headers={"X-API-Key": API_KEY},
+                timeout=240,
             )
             resp.raise_for_status()
             data = resp.json()

@@ -13,6 +13,9 @@ import pandas as pd
 import plotly.express as px
 import requests
 import streamlit as st
+from dotenv import load_dotenv
+
+load_dotenv()
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:8000")
 SCORE_THRESHOLD = float(os.environ.get("SCORE_THRESHOLD", "7"))

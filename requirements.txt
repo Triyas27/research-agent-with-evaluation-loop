@@ -9,3 +9,4 @@ streamlit
 requests
 pandas
 plotly
+slowapi

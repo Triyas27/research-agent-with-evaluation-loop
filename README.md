@@ -17,6 +17,10 @@ copy .env.example .env        # Mac/Linux: cp .env.example .env
 Edit `.env` and fill in:
 - `GROQ_API_KEY` — free, from console.groq.com (sign up, create an API key, no billing info needed)
 - `TAVILY_API_KEY` — free tier at tavily.com
+- `API_KEY` — a shared secret the frontend sends to the backend on `/research`; generate
+  one with `python -c "import secrets; print(secrets.token_urlsafe(32))"`. This matters
+  most once the backend is deployed with a public URL — without it, anyone who finds
+  the URL can spend your Groq/Tavily quota.
 
 Everything else in `.env` has a working default:
 - `DRAFT_MODEL` / `CRITIC_MODEL` — strong model writes/revises, cheap model scores
@@ -66,6 +70,11 @@ failure log of every run that stopped without meeting `SCORE_THRESHOLD`.
   log it, don't crash the request.
 - **Unhandled errors**: any other exception is still logged (status `error`, with the
   message) before the API returns a 500, so nothing silently disappears.
+- **Auth + rate limiting**: `POST /research` requires an `X-API-Key` header matching
+  `API_KEY` and is rate-limited to 10 requests/minute per client IP (via `slowapi`).
+  `GET /runs` is unauthenticated (it just reads the log) but rate-limited to
+  30 requests/minute. Without this, a public deployment is an open door to anyone's
+  Groq/Tavily bill.
 
 ## Logging
 
@@ -92,6 +101,7 @@ curl http://localhost:8000/runs
 ```bash
 curl -X POST http://localhost:8000/research \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: $API_KEY" \
   -d '{"query": "Compare pricing models of 5 SaaS project management tools"}'
 ```
 

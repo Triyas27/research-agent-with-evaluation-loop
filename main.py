@@ -20,10 +20,13 @@ import uuid
 from typing import Any, Dict, List, Literal, Optional, TypedDict
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from groq import Groq
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 from tavily import TavilyClient
 
 import db
@@ -32,6 +35,7 @@ load_dotenv()
 
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY")
+API_KEY = os.environ.get("API_KEY")
 
 # Tradeoff talking point: stronger model for the final draft, cheaper/faster model
 # for the critic loop (it runs multiple times per query).
@@ -58,6 +62,11 @@ if not GROQ_API_KEY:
     raise RuntimeError("GROQ_API_KEY is not set. Add it to your .env file.")
 if not TAVILY_API_KEY:
     raise RuntimeError("TAVILY_API_KEY is not set. Add it to your .env file.")
+if not API_KEY:
+    raise RuntimeError(
+        "API_KEY is not set. Add it to your .env file (generate one with "
+        "`python -c \"import secrets; print(secrets.token_urlsafe(32))\"`)."
+    )
 
 groq_client = Groq(api_key=GROQ_API_KEY)
 tavily_client = TavilyClient(api_key=TAVILY_API_KEY)
@@ -388,6 +397,18 @@ worker_graph = build_graph()
 
 app = FastAPI(title="Self-Correcting Research Agent (Week 3: logging + guardrails)")
 
+# Guardrail: /research is the endpoint that actually spends Groq/Tavily quota, so it
+# requires a shared API key (checked below) and is rate-limited per client IP. /runs
+# is read-only and cheap (SQLite select) but still rate-limited against abuse.
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+def require_api_key(x_api_key: Optional[str] = Header(None)) -> None:
+    if not x_api_key or x_api_key != API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+
 
 @app.on_event("startup")
 def _on_startup():
@@ -418,13 +439,15 @@ def health():
 
 
 @app.get("/runs")
-def runs(limit: int = 50):
+@limiter.limit("30/minute")
+def runs(request: Request, limit: int = 50):
     """Recent logged runs — powers the Week 4 dashboard."""
     return db.get_all_runs(limit=limit)
 
 
 @app.post("/research", response_model=ResearchResponse)
-def research(req: ResearchRequest):
+@limiter.limit("10/minute")
+def research(request: Request, req: ResearchRequest, _: None = Depends(require_api_key)):
     if not req.query.strip():
         raise HTTPException(status_code=400, detail="query must not be empty")
 
