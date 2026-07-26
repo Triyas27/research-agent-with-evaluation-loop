@@ -1,4 +1,4 @@
-# Self-Correcting Research Agent — Week 3
+# Research Agent with Evaluation Loop — Week 3
 
 Worker (search + draft) + critic (scores 0–10, structured feedback) + retry loop, plus
 this week's additions: every run is logged to SQLite, and the agent has guardrails for

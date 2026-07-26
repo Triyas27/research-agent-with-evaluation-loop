@@ -1,5 +1,5 @@
 """
-Self-Correcting Research Agent — Week 3 milestone.
+Research Agent with Evaluation Loop — Week 3 milestone.
 
 Worker agent (search + draft) + critic agent (scores the draft, structured feedback)
 + retry loop (revise up to MAX_ITERATIONS, or until SCORE_THRESHOLD is met) + this
@@ -395,7 +395,7 @@ worker_graph = build_graph()
 # FastAPI app
 # ---------------------------------------------------------------------------
 
-app = FastAPI(title="Self-Correcting Research Agent (Week 3: logging + guardrails)")
+app = FastAPI(title="Research Agent with Evaluation Loop (Week 3: logging + guardrails)")
 
 # Guardrail: /research is the endpoint that actually spends Groq/Tavily quota, so it
 # requires a shared API key (checked below) and is rate-limited per client IP. /runs

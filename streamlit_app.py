@@ -16,7 +16,7 @@ BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:8000")
 API_KEY = os.environ.get("API_KEY", "")
 
 st.set_page_config(page_title="Research Agent", page_icon="🔎")
-st.title("Self-Correcting Research Agent")
+st.title("Research Agent with Evaluation Loop")
 st.caption(
     "Week 3 milestone: worker drafts, critic scores it, worker revises until the "
     "score clears the bar — with logging and guardrails (timeout, cost cap, "
