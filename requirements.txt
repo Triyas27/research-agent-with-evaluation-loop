@@ -10,3 +10,5 @@ requests
 pandas
 plotly
 slowapi
+pytest
+httpx

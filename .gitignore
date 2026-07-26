@@ -4,3 +4,4 @@ __pycache__/
 .env
 runs.db
 .claude/
+.pytest_cache/

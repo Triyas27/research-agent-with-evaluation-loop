@@ -173,6 +173,11 @@ def draft_node(state: AgentState) -> AgentState:
                 "No search results were returned for this query, so I can't produce "
                 "a grounded report. Try rephrasing the question."
             )
+            if not state["stop_reason"]:
+                state["stop_reason"] = "no usable sources"
+        if state["best_score"] < 0:
+            state["best_draft"] = state["draft"]
+            state["best_score"] = 0
         return state
 
     sources_block = _sources_block(sources)
@@ -231,6 +236,9 @@ Rules:
                 "The drafting model failed after retrying, and no earlier draft is "
                 "available. Please try again shortly."
             )
+        if state["best_score"] < 0:
+            state["best_draft"] = state["draft"]
+            state["best_score"] = 0
         return state
 
     _track_usage(state, DRAFT_MODEL, response.usage)
@@ -240,12 +248,11 @@ Rules:
 
 def route_after_draft(state: AgentState) -> Literal["critic", "end"]:
     """Guardrail: skip the critic entirely if the draft step already failed hard —
-    no point scoring a report that couldn't be produced."""
+    no point scoring a report that couldn't be produced. All state (stop_reason,
+    best_draft/best_score) is set inside search_node/draft_node — this function only
+    reads state and picks a route, since LangGraph conditional-edge functions don't
+    commit state mutations back to the graph (only node return values do)."""
     if state.get("search_failed") or state.get("draft_failed") or not state["search_results"]:
-        if not state["stop_reason"]:
-            state["stop_reason"] = "no usable sources"
-        state["best_draft"] = state["draft"]
-        state["best_score"] = 0
         return "end"
     return "critic"
 
@@ -333,41 +340,41 @@ Draft to grade:
         state["best_score"] = total
         state["best_draft"] = state["draft"]
 
-    return state
-
-
-def route_after_critic(state: AgentState) -> Literal["revise", "end"]:
-    if state.get("critic_failed"):
-        return "end"
-
-    last = state["score_history"][-1]
+    # Guardrail decisions (threshold / timeout / cost cap / max iterations) are made
+    # here, inside the node, rather than in route_after_critic: LangGraph conditional-
+    # edge functions don't commit state mutations back to the graph, only node return
+    # values do. state["stop_reason"] doubles as the "should we stop?" signal — left
+    # empty means keep revising.
     elapsed = time.time() - state["start_time"]
 
-    if last["total"] >= SCORE_THRESHOLD:
-        state["stop_reason"] = f"score {last['total']}/10 met threshold ({SCORE_THRESHOLD})"
-        return "end"
-
-    if elapsed >= TIMEOUT_SECONDS:
+    if total >= SCORE_THRESHOLD:
+        state["stop_reason"] = f"score {total}/10 met threshold ({SCORE_THRESHOLD})"
+    elif elapsed >= TIMEOUT_SECONDS:
         state["stop_reason"] = (
             f"timeout budget ({TIMEOUT_SECONDS}s) exceeded after {elapsed:.1f}s; "
             f"returning best draft (score {state['best_score']}/10)"
         )
-        return "end"
-
-    if state["estimated_cost_usd"] >= MAX_COST_USD:
+    elif state["estimated_cost_usd"] >= MAX_COST_USD:
         state["stop_reason"] = (
             f"cost cap (${MAX_COST_USD}) reached (${state['estimated_cost_usd']:.4f} spent); "
             f"returning best draft (score {state['best_score']}/10)"
         )
-        return "end"
-
-    if state["iteration"] >= MAX_ITERATIONS:
+    elif state["iteration"] >= MAX_ITERATIONS:
         state["stop_reason"] = (
             f"hit max iterations ({MAX_ITERATIONS}); "
             f"returning best draft (score {state['best_score']}/10)"
         )
-        return "end"
 
+    return state
+
+
+def route_after_critic(state: AgentState) -> Literal["revise", "end"]:
+    """Pure reader: critic_node already decided (and recorded in stop_reason) whether
+    a guardrail condition was hit. See critic_node for why the decision lives there."""
+    if state.get("critic_failed"):
+        return "end"
+    if state["stop_reason"]:
+        return "end"
     return "revise"
 
 

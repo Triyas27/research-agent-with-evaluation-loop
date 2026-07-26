@@ -105,6 +105,31 @@ curl -X POST http://localhost:8000/research \
   -d '{"query": "Compare pricing models of 5 SaaS project management tools"}'
 ```
 
+## Automated tests
+
+```bash
+pytest tests/
+```
+
+The suite mocks the Groq/Tavily clients (no API calls, no cost) and covers:
+- `tests/test_db.py` — the SQLite logging roundtrip
+- `tests/test_graph_nodes.py` — every guardrail branch of the worker/critic graph in
+  isolation: search/draft/critic tool failures, malformed critic JSON, and each stop
+  condition (score threshold, timeout, cost cap, max iterations)
+- `tests/test_api.py` — the FastAPI endpoints end-to-end: auth, empty-query validation,
+  rate limiting, and full success/tool-failure/max-iterations runs through the real
+  compiled graph, including a regression test for a bug the suite caught (see below)
+
+**Bug the tests caught:** `route_after_draft`/`route_after_critic` are LangGraph
+*conditional-edge* functions, not nodes — mutating `state` inside them doesn't get
+committed back to the graph (only a node's return value does). `stop_reason`,
+`best_draft`, and `best_score` were being set there, so `stop_reason` came back empty
+for every non-tool-failure stop, which meant the `/research` endpoint's
+`if "timeout budget" in stop_reason` / `"cost cap" in stop_reason` status checks never
+matched — timeout and cost-cap runs were silently logged as `success`. Fixed by moving
+all state decisions into `draft_node`/`critic_node` (real nodes); the routing functions
+now only read already-committed state.
+
 ## How the loop works
 
 ```
