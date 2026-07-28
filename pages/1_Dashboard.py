@@ -27,10 +27,24 @@ st.caption(
     "iterations, cost, score distribution, and where the agent struggled."
 )
 
-limit = st.number_input("Runs to load", min_value=10, max_value=5000, value=500, step=10)
+col_limit, col_refresh = st.columns([4, 1])
+with col_limit:
+    limit = st.number_input("Runs to load", min_value=10, max_value=5000, value=500, step=10)
+with col_refresh:
+    st.write("")  # vertical spacer to align the button with the input box
+    if st.button("Refresh"):
+        st.cache_data.clear()
+
+
+@st.cache_data(ttl=30, show_spinner="Loading runs...")
+def fetch_runs(limit: int):
+    resp = requests.get(f"{BACKEND_URL}/runs", params={"limit": limit}, timeout=30)
+    resp.raise_for_status()
+    return resp.json()
+
 
 try:
-    runs = requests.get(f"{BACKEND_URL}/runs", params={"limit": limit}, timeout=30).json()
+    runs = fetch_runs(limit)
 except requests.exceptions.RequestException as e:
     st.error(f"Could not reach backend at {BACKEND_URL}: {e}")
     st.stop()
@@ -111,17 +125,29 @@ st.caption(
     f"Runs that stopped without meeting the score threshold ({SCORE_THRESHOLD}/10)."
 )
 
-failures = df[df["status"] != "success"].sort_values("created_at", ascending=False)
+failures = df[df["status"] != "success"].sort_values("created_at", ascending=False).copy()
+
+# error is a genuine crash; timeout/cost_cap are guardrails doing their job as
+# designed; tool_failure sits in between (an external dependency broke, but the
+# guardrail caught it). Distinguishing these matters more than treating every
+# non-success row as equally bad.
+SEVERITY = {
+    "error": "🔴 crash",
+    "tool_failure": "🟠 tool failure",
+    "timeout": "🟡 guardrail (timeout)",
+    "cost_cap": "🟡 guardrail (cost cap)",
+}
 
 if failures.empty:
     st.success("Every logged run met the score threshold.")
 else:
+    failures["severity"] = failures["status"].map(SEVERITY).fillna(failures["status"])
     st.dataframe(
         failures[
             [
+                "severity",
                 "created_at",
                 "query",
-                "status",
                 "iterations",
                 "final_score",
                 "stop_reason",
@@ -134,6 +160,6 @@ else:
 
     with st.expander("Failure breakdown by status"):
         for status, group in failures.groupby("status"):
-            st.markdown(f"**{status}** — {len(group)} run(s)")
+            st.markdown(f"**{SEVERITY.get(status, status)}** — {len(group)} run(s)")
             for _, row in group.iterrows():
                 st.caption(f"\"{row['query']}\" — {row['stop_reason']}")

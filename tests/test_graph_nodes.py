@@ -210,6 +210,37 @@ def test_critic_node_scores_valid_json(monkeypatch):
     assert result["best_draft"] == "a draft"
 
 
+def test_critic_node_preserves_fractional_scores(monkeypatch):
+    """A critic returning 3.5 must not be silently floored to 3 — that's the exact
+    rubric this project's whole pitch is built around."""
+    monkeypatch.setattr(
+        main.groq_client.chat.completions,
+        "create",
+        lambda **kw: make_groq_response(
+            '{"grounding": 3.5, "completeness": 2.5, "coherence": 2, "feedback": "Mostly solid."}'
+        ),
+    )
+    state = make_state(search_results=SOURCES, draft="a draft", iteration=1)
+    result = main.critic_node(state)
+    score = result["score_history"][0]
+    assert score["grounding"] == 3.5
+    assert score["completeness"] == 2.5
+    assert score["total"] == 8.0
+
+
+def test_critic_node_records_draft_text_per_iteration(monkeypatch):
+    monkeypatch.setattr(
+        main.groq_client.chat.completions,
+        "create",
+        lambda **kw: make_groq_response(
+            '{"grounding": 4, "completeness": 3, "coherence": 3, "feedback": "Solid."}'
+        ),
+    )
+    state = make_state(search_results=SOURCES, draft="the draft text for this iteration", iteration=1)
+    result = main.critic_node(state)
+    assert result["score_history"][0]["draft"] == "the draft text for this iteration"
+
+
 def test_critic_node_invalid_json_scores_conservatively(monkeypatch):
     monkeypatch.setattr(
         main.groq_client.chat.completions,

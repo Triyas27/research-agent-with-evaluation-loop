@@ -22,6 +22,7 @@ st.caption(
     "score clears the bar — with logging and guardrails (timeout, cost cap, "
     "tool-failure fallback)"
 )
+st.page_link("pages/1_Dashboard.py", label="View run dashboard", icon="📊")
 
 query = st.text_area(
     "Research question",
@@ -29,8 +30,11 @@ query = st.text_area(
     height=100,
 )
 
-if st.button("Run research", type="primary") and query.strip():
-    with st.spinner("Searching, drafting, and self-critiquing..."):
+if st.button("Run research", type="primary"):
+    if not query.strip():
+        st.warning("Enter a research question first.")
+    else:
+      with st.spinner("Searching, drafting, and self-critiquing..."):
         try:
             resp = requests.post(
                 f"{BACKEND_URL}/research",
@@ -42,7 +46,7 @@ if st.button("Run research", type="primary") and query.strip():
             data = resp.json()
 
             col1, col2, col3, col4 = st.columns(4)
-            col1.metric("Final score", f"{data['final_score']:.0f}/10")
+            col1.metric("Final score", f"{data['final_score']:.1f}/10")
             col2.metric("Iterations", data["iterations"])
             col3.metric("Latency", f"{data['latency_seconds']}s")
             col4.metric("Est. cost", f"${data['estimated_cost_usd']:.4f}")
@@ -51,14 +55,17 @@ if st.button("Run research", type="primary") and query.strip():
                 f"{data['total_tokens']} tokens  ·  run_id {data['run_id'][:8]}"
             )
 
-            with st.expander("Score history (per iteration)"):
+            with st.expander("Score history (per iteration)", expanded=True):
                 for s in data["score_history"]:
                     st.markdown(
-                        f"**Iteration {s['iteration']}** — total {s['total']}/10 "
-                        f"(grounding {s['grounding']}/4, completeness {s['completeness']}/3, "
-                        f"coherence {s['coherence']}/3)"
+                        f"**Iteration {s['iteration']}** — total {s['total']:.1f}/10 "
+                        f"(grounding {s['grounding']:.1f}/4, completeness {s['completeness']:.1f}/3, "
+                        f"coherence {s['coherence']:.1f}/3)"
                     )
                     st.caption(s["feedback"])
+                    if s.get("draft"):
+                        with st.expander(f"Draft as of iteration {s['iteration']}"):
+                            st.markdown(s["draft"])
 
             st.divider()
             st.markdown(data["report"])

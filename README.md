@@ -48,14 +48,18 @@ streamlit run streamlit_app.py
 
 Open the Streamlit URL (usually http://localhost:8501), ask a research question, and
 click "Run research". The UI shows score, iterations, latency, estimated cost, why the
-loop stopped, and a per-iteration feedback breakdown. The "Recent runs" panel at the
-bottom reads straight from the logging DB.
+loop stopped, and a per-iteration feedback breakdown — including the actual draft text
+at each iteration, so you can see what the critic's feedback actually changed. The
+"Recent runs" panel at the bottom reads straight from the logging DB.
 
-A second page, **Dashboard** (`pages/1_Dashboard.py`), shows up automatically in the
-Streamlit sidebar. It aggregates every logged run into: total runs, success rate,
+A second page, **Dashboard** (`pages/1_Dashboard.py`) — linked directly from the main
+page, not just tucked in the sidebar — aggregates every logged run into: total runs, success rate,
 avg iterations, avg cost/query, avg latency, a score-distribution histogram, a
 stop-reason breakdown, cost-per-query over time, an iterations histogram, and a
-failure log of every run that stopped without meeting `SCORE_THRESHOLD`.
+failure log of every run that stopped without meeting `SCORE_THRESHOLD` — tagged by
+severity (🔴 crash / 🟠 tool failure / 🟡 guardrail doing its job) rather than treating
+every non-success run as equally bad. Run data is cached for 30s; use the Refresh
+button to force a reload after a new run.
 
 ## Guardrails
 

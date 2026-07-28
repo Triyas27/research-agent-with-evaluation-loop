@@ -78,11 +78,12 @@ tavily_client = TavilyClient(api_key=TAVILY_API_KEY)
 
 class CriticScore(TypedDict):
     iteration: int
-    grounding: int
-    completeness: int
-    coherence: int
+    grounding: float
+    completeness: float
+    coherence: float
     total: float
     feedback: str
+    draft: str
 
 
 class AgentState(TypedDict):
@@ -307,15 +308,19 @@ Draft to grade:
                 "coherence": 0,
                 "total": 0,
                 "feedback": f"Critic call failed: {e}",
+                "draft": state["draft"],
             }
         )
         return state
 
     try:
         parsed = json.loads(raw)
-        grounding = int(parsed.get("grounding", 0))
-        completeness = int(parsed.get("completeness", 0))
-        coherence = int(parsed.get("coherence", 0))
+        # float(), not int(): a critic returning e.g. 3.5 shouldn't get silently
+        # floored to 3 — that's a real precision loss in the exact rubric this
+        # project is built around.
+        grounding = float(parsed.get("grounding", 0))
+        completeness = float(parsed.get("completeness", 0))
+        coherence = float(parsed.get("coherence", 0))
         feedback = str(parsed.get("feedback", "")).strip()
     except (json.JSONDecodeError, TypeError, ValueError):
         # Guardrail: if the critic doesn't return parseable JSON, score conservatively
@@ -324,7 +329,7 @@ Draft to grade:
         grounding, completeness, coherence = 0, 0, 0
         feedback = f"Critic response was not valid JSON, could not be scored: {raw[:300]}"
 
-    total = grounding + completeness + coherence
+    total = round(grounding + completeness + coherence, 2)
 
     score: CriticScore = {
         "iteration": state["iteration"],
@@ -333,6 +338,7 @@ Draft to grade:
         "coherence": coherence,
         "total": total,
         "feedback": feedback,
+        "draft": state["draft"],
     }
     state["score_history"].append(score)
 
