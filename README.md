@@ -1,5 +1,9 @@
 # Research Agent with Evaluation Loop — Week 3
 
+**Live:** [frontend](https://frontend-production-28989.up.railway.app) ·
+[backend API](https://backend-production-c15a.up.railway.app/health) — deployed on
+Railway, see [Deployment](#deployment-railway) below.
+
 Worker (search + draft) + critic (scores 0–10, structured feedback) + retry loop, plus
 this week's additions: every run is logged to SQLite, and the agent has guardrails for
 timeouts, cost caps, and tool failures instead of just crashing. Dashboard + writeup
@@ -214,6 +218,12 @@ Since neither service is GitHub-linked, redeploying after a code change means ru
 `railway up --service <name>` again (or connecting the repo later via
 `railway service source connect` once the Railway GitHub App is authorized on the
 account, for auto-deploy on push).
+
+**Known limitation:** Railway's filesystem is ephemeral — `runs.db` (SQLite) lives on
+the backend container's local disk, so every redeploy wipes the run log. Fine for a
+demo; for the log to actually persist, attach a Railway Volume mounted at the
+backend's working directory (or move to a proper hosted DB — Postgres, e.g. — since
+concurrent writes to a SQLite file on a shared volume aren't safe either).
 
 ## Next steps (per project plan)
 
