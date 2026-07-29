@@ -34,6 +34,14 @@ Everything else in `.env` has a working default:
 
 ## Run
 
+Single command (starts both, Ctrl+C stops both):
+
+```bash
+python run_dev.py
+```
+
+Or run them separately in two terminals:
+
 Backend (terminal 1):
 
 ```bash

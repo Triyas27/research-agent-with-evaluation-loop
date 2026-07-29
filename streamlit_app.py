@@ -73,6 +73,10 @@ if st.button("Run research", type="primary"):
             st.error(f"Request to backend failed: {e}")
 
 with st.expander("Recent runs (from the logging DB)"):
+    st.caption(
+        "A quick raw feed of the latest calls. For aggregate stats, charts, and the "
+        "failure log, see the Dashboard page linked above."
+    )
     if st.button("Refresh run log"):
         try:
             runs = requests.get(f"{BACKEND_URL}/runs", timeout=30).json()

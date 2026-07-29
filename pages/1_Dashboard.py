@@ -162,4 +162,25 @@ else:
         for status, group in failures.groupby("status"):
             st.markdown(f"**{SEVERITY.get(status, status)}** — {len(group)} run(s)")
             for _, row in group.iterrows():
-                st.caption(f"\"{row['query']}\" — {row['stop_reason']}")
+                with st.expander(f"\"{row['query']}\" — {row['stop_reason']}"):
+                    score_history = row.get("score_per_iteration") or []
+                    if not score_history:
+                        st.caption("No score history recorded for this run.")
+                    for s in score_history:
+                        st.markdown(
+                            f"**Iteration {s['iteration']}** — total {s['total']}/10 "
+                            f"(grounding {s.get('grounding')}/4, "
+                            f"completeness {s.get('completeness')}/3, "
+                            f"coherence {s.get('coherence')}/3)"
+                        )
+                        st.caption(s.get("feedback", ""))
+                        if s.get("draft"):
+                            st.text_area(
+                                f"Draft as of iteration {s['iteration']}",
+                                s["draft"],
+                                height=120,
+                                disabled=True,
+                                key=f"draft-{row['run_id']}-{s['iteration']}",
+                            )
+                    if pd.notna(row.get("error_message")):
+                        st.code(row["error_message"])
