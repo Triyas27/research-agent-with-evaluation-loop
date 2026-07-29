@@ -11,4 +11,5 @@ pandas
 plotly
 slowapi
 pytest
+pytest-asyncio
 httpx

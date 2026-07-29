@@ -100,6 +100,19 @@ status-classification, and logging code — they can't drift from each other. Wi
 this, a query that takes the full 60-second budget just sits behind a spinner with no
 indication of what's actually happening.
 
+## Async end-to-end
+
+`/research` and `/research/stream` are `async def`, and the Groq/Tavily calls use
+`AsyncGroq`/`AsyncTavilyClient` all the way down through `worker_graph.ainvoke()` /
+`.astream()` — a query in flight doesn't hold a worker thread for its whole duration,
+so concurrent requests actually overlap instead of queuing behind a limited threadpool.
+`tests/test_api.py::test_concurrent_research_requests_run_in_parallel` proves this: 5
+concurrent requests with mocked 0.5s Groq/Tavily calls finish in ~1.6s, not the ~5s
+they'd take fully serialized — if a blocking call ever sneaks back into this path,
+that test starts failing. (`db.py`'s SQLite calls stay synchronous — they're
+local-file reads/writes on the order of microseconds, not worth the complexity of an
+async driver.)
+
 ## Logging
 
 Every call to `POST /research` writes one row to the `runs` table in `runs.db`:

@@ -13,6 +13,7 @@ week's additions:
 Dashboard + writeup come in Week 4.
 """
 
+import asyncio
 import json
 import os
 import time
@@ -22,13 +23,13 @@ from typing import Any, Dict, List, Literal, Optional, TypedDict
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from groq import Groq
+from groq import AsyncGroq
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
-from tavily import TavilyClient
+from tavily import AsyncTavilyClient
 
 import db
 
@@ -69,8 +70,8 @@ if not API_KEY:
         "`python -c \"import secrets; print(secrets.token_urlsafe(32))\"`)."
     )
 
-groq_client = Groq(api_key=GROQ_API_KEY)
-tavily_client = TavilyClient(api_key=TAVILY_API_KEY)
+groq_client = AsyncGroq(api_key=GROQ_API_KEY)
+tavily_client = AsyncTavilyClient(api_key=TAVILY_API_KEY)
 
 
 # ---------------------------------------------------------------------------
@@ -113,16 +114,16 @@ def _sources_block(sources: List[Dict[str, Any]]) -> str:
     )
 
 
-def _call_groq_with_retry(**kwargs):
+async def _call_groq_with_retry(**kwargs):
     """Call the Groq API, retrying transient failures before giving up."""
     last_err: Optional[Exception] = None
     for attempt in range(LLM_MAX_RETRIES):
         try:
-            return groq_client.chat.completions.create(**kwargs)
+            return await groq_client.chat.completions.create(**kwargs)
         except Exception as e:  # noqa: BLE001 - genuinely want to catch+retry any SDK error
             last_err = e
             if attempt < LLM_MAX_RETRIES - 1:
-                time.sleep(1.5 * (attempt + 1))
+                await asyncio.sleep(1.5 * (attempt + 1))
     raise last_err
 
 
@@ -142,11 +143,11 @@ def _track_usage(state: AgentState, model: str, usage) -> None:
 # Nodes
 # ---------------------------------------------------------------------------
 
-def search_node(state: AgentState) -> AgentState:
+async def search_node(state: AgentState) -> AgentState:
     """Search the web for sources. Guardrail: on tool failure, degrade gracefully
     instead of crashing the whole request."""
     try:
-        results = tavily_client.search(
+        results = await tavily_client.search(
             query=state["query"],
             max_results=8,
             search_depth="advanced",
@@ -159,7 +160,7 @@ def search_node(state: AgentState) -> AgentState:
     return state
 
 
-def draft_node(state: AgentState) -> AgentState:
+async def draft_node(state: AgentState) -> AgentState:
     """Draft (iteration 1) or revise (iteration > 1) the report."""
     sources = state["search_results"]
     state["iteration"] += 1
@@ -225,7 +226,7 @@ Rules:
 """
 
     try:
-        response = _call_groq_with_retry(
+        response = await _call_groq_with_retry(
             model=DRAFT_MODEL,
             max_tokens=2000,
             messages=[{"role": "user", "content": prompt}],
@@ -259,7 +260,7 @@ def route_after_draft(state: AgentState) -> Literal["critic", "end"]:
     return "critic"
 
 
-def critic_node(state: AgentState) -> AgentState:
+async def critic_node(state: AgentState) -> AgentState:
     """Score the current draft 0-10 on grounding, completeness, coherence."""
     sources_block = _sources_block(state["search_results"])
 
@@ -284,7 +285,7 @@ Draft to grade:
 """
 
     try:
-        response = _call_groq_with_retry(
+        response = await _call_groq_with_retry(
             model=CRITIC_MODEL,
             max_tokens=600,
             temperature=0,
@@ -560,7 +561,7 @@ def _progress_message(node: str, state: AgentState) -> str:
 
 @app.post("/research", response_model=ResearchResponse)
 @limiter.limit("10/minute")
-def research(request: Request, req: ResearchRequest, _: None = Depends(require_api_key)):
+async def research(request: Request, req: ResearchRequest, _: None = Depends(require_api_key)):
     if not req.query.strip():
         raise HTTPException(status_code=400, detail="query must not be empty")
 
@@ -569,7 +570,7 @@ def research(request: Request, req: ResearchRequest, _: None = Depends(require_a
     initial_state = _build_initial_state(req.query, start)
 
     try:
-        result = worker_graph.invoke(initial_state)
+        result = await worker_graph.ainvoke(initial_state)
     except Exception as e:  # noqa: BLE001 - guardrail: log + fail cleanly, don't 500 silently
         _log_error(run_id, req.query, time.time() - start, e)
         raise HTTPException(status_code=500, detail=f"Research run failed: {e}") from e
@@ -579,7 +580,7 @@ def research(request: Request, req: ResearchRequest, _: None = Depends(require_a
 
 @app.post("/research/stream")
 @limiter.limit("10/minute")
-def research_stream(request: Request, req: ResearchRequest, _: None = Depends(require_api_key)):
+async def research_stream(request: Request, req: ResearchRequest, _: None = Depends(require_api_key)):
     """Same worker/critic loop as /research, but streamed as Server-Sent Events so
     the UI can show live progress instead of a single silent 60-second wait. Emits
     one 'progress' event per graph node, then a final 'done' event carrying the same
@@ -587,14 +588,14 @@ def research_stream(request: Request, req: ResearchRequest, _: None = Depends(re
     if not req.query.strip():
         raise HTTPException(status_code=400, detail="query must not be empty")
 
-    def event_stream():
+    async def event_stream():
         run_id = str(uuid.uuid4())
         start = time.time()
         initial_state = _build_initial_state(req.query, start)
 
         final_state: Optional[AgentState] = None
         try:
-            for update in worker_graph.stream(initial_state):
+            async for update in worker_graph.astream(initial_state):
                 node, state = next(iter(update.items()))
                 final_state = state
                 yield f"data: {json.dumps({'event': 'progress', 'message': _progress_message(node, state)})}\n\n"

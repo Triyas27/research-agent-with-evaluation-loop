@@ -1,5 +1,8 @@
+import asyncio
 import json
+import time
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -25,9 +28,12 @@ def api_client(tmp_path, monkeypatch):
 @pytest.fixture
 def mock_happy_path(monkeypatch):
     """Search succeeds, draft succeeds, critic scores above threshold first try."""
-    monkeypatch.setattr(main.tavily_client, "search", lambda **kw: {"results": SOURCES})
+    async def fake_search(**kw):
+        return {"results": SOURCES}
 
-    def fake_create(**kw):
+    monkeypatch.setattr(main.tavily_client, "search", fake_search)
+
+    async def fake_create(**kw):
         if kw["model"] == main.CRITIC_MODEL:
             return make_groq_response(GOOD_CRITIC_JSON)
         return make_groq_response("A well-cited report [1].")
@@ -78,7 +84,7 @@ def test_research_success_path_logs_and_returns_report(api_client, mock_happy_pa
 
 
 def test_research_tool_failure_returns_200_not_500(api_client, monkeypatch):
-    def boom(**kw):
+    async def boom(**kw):
         raise RuntimeError("tavily is down")
 
     monkeypatch.setattr(main.tavily_client, "search", boom)
@@ -117,11 +123,14 @@ def test_research_exhausts_max_iterations_when_score_never_clears_threshold(
     edge function, whose state mutations never made it back into the graph's final
     state, so this scenario's stop_reason came back empty and iterations silently
     looked identical to a fresh/never-revised run."""
-    monkeypatch.setattr(main.tavily_client, "search", lambda **kw: {"results": SOURCES})
+    async def fake_search(**kw):
+        return {"results": SOURCES}
+
+    monkeypatch.setattr(main.tavily_client, "search", fake_search)
 
     low_score_json = '{"grounding": 1, "completeness": 0, "coherence": 0, "feedback": "weak"}'
 
-    def fake_create(**kw):
+    async def fake_create(**kw):
         if kw["model"] == main.CRITIC_MODEL:
             return make_groq_response(low_score_json)
         return make_groq_response("A weakly-cited report [1].")
@@ -188,7 +197,7 @@ def test_research_stream_success_path_emits_progress_then_done(api_client, mock_
 
 
 def test_research_stream_tool_failure_emits_error_progress_and_done(api_client, monkeypatch):
-    def boom(**kw):
+    async def boom(**kw):
         raise RuntimeError("tavily is down")
 
     monkeypatch.setattr(main.tavily_client, "search", boom)
@@ -209,6 +218,55 @@ def test_research_stream_tool_failure_emits_error_progress_and_done(api_client, 
 
     runs = api_client.get("/runs").json()
     assert runs[0]["status"] == "tool_failure"
+
+
+async def test_concurrent_research_requests_run_in_parallel(tmp_path, monkeypatch):
+    """Regression guard for the async conversion: /research awaits AsyncGroq/
+    AsyncTavilyClient end-to-end via worker_graph.ainvoke(), so concurrent requests
+    should overlap on the event loop instead of serializing. If a blocking call ever
+    sneaks back into this path, concurrent requests would take roughly
+    n_concurrent * (time per request) instead of ~(time per request)."""
+    monkeypatch.setattr(db, "DB_PATH", str(tmp_path / "concurrency_test.db"))
+    db.init_db()
+    main.limiter._storage.reset()
+
+    delay = 0.5
+
+    async def slow_search(**kw):
+        await asyncio.sleep(delay)
+        return {"results": SOURCES}
+
+    async def slow_create(**kw):
+        await asyncio.sleep(delay)
+        if kw["model"] == main.CRITIC_MODEL:
+            return make_groq_response(GOOD_CRITIC_JSON)
+        return make_groq_response("A well-cited report [1].")
+
+    monkeypatch.setattr(main.tavily_client, "search", slow_search)
+    monkeypatch.setattr(main.groq_client.chat.completions, "create", slow_create)
+
+    n_concurrent = 5
+    transport = httpx.ASGITransport(app=main.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        start = time.perf_counter()
+        responses = await asyncio.gather(
+            *[
+                client.post(
+                    "/research",
+                    json={"query": f"query {i}"},
+                    headers={"X-API-Key": "test-shared-key"},
+                    timeout=30,
+                )
+                for i in range(n_concurrent)
+            ]
+        )
+        elapsed = time.perf_counter() - start
+
+    assert all(r.status_code == 200 for r in responses)
+    # Each request does 2 slow calls (search + draft; critic scores 10/10 first try,
+    # so no revision). Fully serialized would take n_concurrent * 2 * delay = 5s;
+    # truly concurrent takes roughly 2 * delay regardless of n_concurrent.
+    assert elapsed < n_concurrent * delay
 
 
 def test_runs_endpoint_is_rate_limited(api_client):
