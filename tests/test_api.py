@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -136,6 +138,77 @@ def test_research_exhausts_max_iterations_when_score_never_clears_threshold(
     assert data["iterations"] == main.MAX_ITERATIONS
     assert "max iterations" in data["stop_reason"]
     assert len(data["score_history"]) == main.MAX_ITERATIONS
+
+
+def _parse_sse_events(response_text):
+    events = []
+    for chunk in response_text.strip().split("\n\n"):
+        chunk = chunk.strip()
+        if chunk.startswith("data: "):
+            events.append(json.loads(chunk[len("data: "):]))
+    return events
+
+
+def test_research_stream_requires_api_key(api_client):
+    resp = api_client.post("/research/stream", json={"query": "compare things"})
+    assert resp.status_code == 401
+
+
+def test_research_stream_rejects_empty_query(api_client):
+    resp = api_client.post(
+        "/research/stream", json={"query": "  "}, headers={"X-API-Key": "test-shared-key"}
+    )
+    assert resp.status_code == 400
+
+
+def test_research_stream_success_path_emits_progress_then_done(api_client, mock_happy_path):
+    resp = api_client.post(
+        "/research/stream",
+        json={"query": "compare things"},
+        headers={"X-API-Key": "test-shared-key"},
+    )
+    assert resp.status_code == 200
+    events = _parse_sse_events(resp.text)
+
+    progress_events = [e for e in events if e["event"] == "progress"]
+    done_events = [e for e in events if e["event"] == "done"]
+    assert len(done_events) == 1
+    assert len(progress_events) >= 2  # at least search + draft + critic in some form
+
+    # search -> draft -> critic, in that order, with human-readable messages
+    assert "sources" in progress_events[0]["message"]
+    assert any("scored" in e["message"] for e in progress_events)
+
+    data = done_events[0]["data"]
+    assert data["final_score"] == 10
+    assert "met threshold" in data["stop_reason"]
+
+    runs = api_client.get("/runs").json()
+    assert runs[0]["status"] == "success"
+
+
+def test_research_stream_tool_failure_emits_error_progress_and_done(api_client, monkeypatch):
+    def boom(**kw):
+        raise RuntimeError("tavily is down")
+
+    monkeypatch.setattr(main.tavily_client, "search", boom)
+
+    resp = api_client.post(
+        "/research/stream",
+        json={"query": "compare things"},
+        headers={"X-API-Key": "test-shared-key"},
+    )
+    assert resp.status_code == 200
+    events = _parse_sse_events(resp.text)
+
+    progress_events = [e for e in events if e["event"] == "progress"]
+    done_events = [e for e in events if e["event"] == "done"]
+    assert "failed" in progress_events[0]["message"]
+    assert len(done_events) == 1
+    assert "search tool failed" in done_events[0]["data"]["report"]
+
+    runs = api_client.get("/runs").json()
+    assert runs[0]["status"] == "tool_failure"
 
 
 def test_runs_endpoint_is_rate_limited(api_client):

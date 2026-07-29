@@ -88,6 +88,18 @@ button to force a reload after a new run.
   30 requests/minute. Without this, a public deployment is an open door to anyone's
   Groq/Tavily bill.
 
+## Progress streaming
+
+`POST /research` still returns a single JSON response once the whole loop finishes —
+useful for `curl`/scripting. The Streamlit UI instead calls `POST /research/stream`,
+which streams the same run as Server-Sent Events: one `progress` event per graph node
+("Searched the web, found 8 sources", "Critic scored iteration 1: 5/10", ...) and a
+final `done` event carrying the exact same payload `/research` returns (or an `error`
+event on an unhandled exception). Both endpoints share the same graph-execution,
+status-classification, and logging code — they can't drift from each other. Without
+this, a query that takes the full 60-second budget just sits behind a spinner with no
+indication of what's actually happening.
+
 ## Logging
 
 Every call to `POST /research` writes one row to the `runs` table in `runs.db`:

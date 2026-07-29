@@ -21,6 +21,7 @@ from typing import Any, Dict, List, Literal, Optional, TypedDict
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from groq import Groq
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel
@@ -458,17 +459,9 @@ def runs(request: Request, limit: int = 50):
     return db.get_all_runs(limit=limit)
 
 
-@app.post("/research", response_model=ResearchResponse)
-@limiter.limit("10/minute")
-def research(request: Request, req: ResearchRequest, _: None = Depends(require_api_key)):
-    if not req.query.strip():
-        raise HTTPException(status_code=400, detail="query must not be empty")
-
-    run_id = str(uuid.uuid4())
-    start = time.time()
-
-    initial_state: AgentState = {
-        "query": req.query,
+def _build_initial_state(query: str, start: float) -> AgentState:
+    return {
+        "query": query,
         "search_results": [],
         "draft": "",
         "iteration": 0,
@@ -484,40 +477,42 @@ def research(request: Request, req: ResearchRequest, _: None = Depends(require_a
         "critic_failed": False,
     }
 
-    try:
-        result = worker_graph.invoke(initial_state)
-    except Exception as e:  # noqa: BLE001 - guardrail: log + fail cleanly, don't 500 silently
-        latency = time.time() - start
-        db.log_run(
-            run_id=run_id,
-            query=req.query,
-            status="error",
-            iterations=0,
-            final_score=None,
-            score_per_iteration=[],
-            num_sources=0,
-            total_tokens=0,
-            estimated_cost_usd=0.0,
-            latency_seconds=round(latency, 2),
-            stop_reason="unhandled exception",
-            error_message=str(e)[:2000],
-        )
-        raise HTTPException(status_code=500, detail=f"Research run failed: {e}") from e
 
-    latency = time.time() - start
-
+def _classify_status(result: AgentState) -> str:
     if "timeout budget" in result["stop_reason"]:
-        status = "timeout"
-    elif "cost cap" in result["stop_reason"]:
-        status = "cost_cap"
-    elif result.get("search_failed") or result.get("draft_failed") or result.get("critic_failed"):
-        status = "tool_failure"
-    else:
-        status = "success"
+        return "timeout"
+    if "cost cap" in result["stop_reason"]:
+        return "cost_cap"
+    if result.get("search_failed") or result.get("draft_failed") or result.get("critic_failed"):
+        return "tool_failure"
+    return "success"
+
+
+def _log_error(run_id: str, query: str, latency: float, error: Exception) -> None:
+    db.log_run(
+        run_id=run_id,
+        query=query,
+        status="error",
+        iterations=0,
+        final_score=None,
+        score_per_iteration=[],
+        num_sources=0,
+        total_tokens=0,
+        estimated_cost_usd=0.0,
+        latency_seconds=round(latency, 2),
+        stop_reason="unhandled exception",
+        error_message=str(error)[:2000],
+    )
+
+
+def _finalize(run_id: str, query: str, result: AgentState, latency: float) -> ResearchResponse:
+    """Classify the finished run, log it, and build the API response. Shared by
+    /research and /research/stream so the two endpoints can't drift."""
+    status = _classify_status(result)
 
     db.log_run(
         run_id=run_id,
-        query=req.query,
+        query=query,
         status=status,
         iterations=result["iteration"],
         final_score=result["best_score"],
@@ -532,7 +527,7 @@ def research(request: Request, req: ResearchRequest, _: None = Depends(require_a
 
     return ResearchResponse(
         run_id=run_id,
-        query=req.query,
+        query=query,
         report=result["best_draft"] or result["draft"],
         num_sources=len(result["search_results"]),
         latency_seconds=round(latency, 2),
@@ -543,3 +538,72 @@ def research(request: Request, req: ResearchRequest, _: None = Depends(require_a
         total_tokens=result["total_tokens"],
         estimated_cost_usd=round(result["estimated_cost_usd"], 6),
     )
+
+
+def _progress_message(node: str, state: AgentState) -> str:
+    if node == "search":
+        if state.get("search_failed"):
+            return "Web search failed"
+        return f"Searched the web, found {len(state['search_results'])} sources"
+    if node == "draft":
+        if state.get("draft_failed"):
+            return f"Drafting failed on iteration {state['iteration']}"
+        verb = "Drafted" if state["iteration"] == 1 else "Revised"
+        return f"{verb} report (iteration {state['iteration']})"
+    if node == "critic":
+        if state.get("critic_failed"):
+            return "Critic call failed"
+        last = state["score_history"][-1]
+        return f"Critic scored iteration {state['iteration']}: {last['total']}/10"
+    return node
+
+
+@app.post("/research", response_model=ResearchResponse)
+@limiter.limit("10/minute")
+def research(request: Request, req: ResearchRequest, _: None = Depends(require_api_key)):
+    if not req.query.strip():
+        raise HTTPException(status_code=400, detail="query must not be empty")
+
+    run_id = str(uuid.uuid4())
+    start = time.time()
+    initial_state = _build_initial_state(req.query, start)
+
+    try:
+        result = worker_graph.invoke(initial_state)
+    except Exception as e:  # noqa: BLE001 - guardrail: log + fail cleanly, don't 500 silently
+        _log_error(run_id, req.query, time.time() - start, e)
+        raise HTTPException(status_code=500, detail=f"Research run failed: {e}") from e
+
+    return _finalize(run_id, req.query, result, time.time() - start)
+
+
+@app.post("/research/stream")
+@limiter.limit("10/minute")
+def research_stream(request: Request, req: ResearchRequest, _: None = Depends(require_api_key)):
+    """Same worker/critic loop as /research, but streamed as Server-Sent Events so
+    the UI can show live progress instead of a single silent 60-second wait. Emits
+    one 'progress' event per graph node, then a final 'done' event carrying the same
+    payload /research returns (or an 'error' event on an unhandled exception)."""
+    if not req.query.strip():
+        raise HTTPException(status_code=400, detail="query must not be empty")
+
+    def event_stream():
+        run_id = str(uuid.uuid4())
+        start = time.time()
+        initial_state = _build_initial_state(req.query, start)
+
+        final_state: Optional[AgentState] = None
+        try:
+            for update in worker_graph.stream(initial_state):
+                node, state = next(iter(update.items()))
+                final_state = state
+                yield f"data: {json.dumps({'event': 'progress', 'message': _progress_message(node, state)})}\n\n"
+        except Exception as e:  # noqa: BLE001 - same guardrail as /research, just over SSE
+            _log_error(run_id, req.query, time.time() - start, e)
+            yield f"data: {json.dumps({'event': 'error', 'message': str(e)})}\n\n"
+            return
+
+        response = _finalize(run_id, req.query, final_state, time.time() - start)
+        yield f"data: {json.dumps({'event': 'done', 'data': json.loads(response.model_dump_json())})}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
