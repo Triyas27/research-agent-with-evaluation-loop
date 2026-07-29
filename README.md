@@ -183,32 +183,37 @@ query
 
 ## Deployment (Railway)
 
-This repo deploys as **two Railway services** pointed at the same GitHub repo:
+This repo deploys as **two Railway services** in one project, both built from the
+same code via `railway up` (CLI upload, not a GitHub-linked deploy). `railway.json`'s
+`startCommand` reads an optional `START_CMD` variable so one config file serves both
+services:
 
-| Service | Start command | Public? |
+| Service | `START_CMD` | Public? |
 |---|---|---|
-| `backend` | from `railway.json` — `uvicorn main:app --host 0.0.0.0 --port $PORT` | Yes — generate a domain |
-| `frontend` | override in service settings — `streamlit run streamlit_app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true` | Yes — generate a domain |
+| `backend` | *(unset — falls back to the default)* `uvicorn main:app --host 0.0.0.0 --port $PORT` | Yes — generate a domain |
+| `frontend` | `streamlit run streamlit_app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true` | Yes — generate a domain |
 
 Steps:
 
-1. `railway login`, then `railway init` from the repo root to create a project.
-2. In the Railway dashboard, add a service from this GitHub repo (becomes `backend`).
-   It picks up `railway.json` automatically. Set its environment variables:
-   `GROQ_API_KEY`, `TAVILY_API_KEY`, `API_KEY`, and optionally `DRAFT_MODEL`,
-   `CRITIC_MODEL`, `MAX_ITERATIONS`, `SCORE_THRESHOLD`, `TIMEOUT_SECONDS`,
-   `MAX_COST_USD` (all have working defaults if omitted). Generate a public domain
-   for it (Settings → Networking → Generate Domain).
-3. Add a **second** service from the same repo (becomes `frontend`). In its
-   Settings → Deploy, set a **Custom Start Command** overriding `railway.json`:
-   `streamlit run streamlit_app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true`.
-   Set its env vars: `BACKEND_URL` = the backend service's public domain (from
-   step 2), and `API_KEY` = the same value as the backend's `API_KEY`. Generate a
-   public domain for it too.
-4. Open the frontend's public URL — that's the deployed app.
+1. `railway login`, then `railway init` to create a project.
+2. `railway add --service backend` and `railway add --service frontend` (empty
+   services — code gets pushed via `railway up`, not a GitHub link).
+3. On `backend`, set env vars: `GROQ_API_KEY`, `TAVILY_API_KEY`, `API_KEY` (required —
+   generate one with `python -c "import secrets; print(secrets.token_urlsafe(32))"`).
+   `DRAFT_MODEL`, `CRITIC_MODEL`, `MAX_ITERATIONS`, `SCORE_THRESHOLD`,
+   `TIMEOUT_SECONDS`, `MAX_COST_USD` are optional (working defaults if omitted).
+   Deploy: `railway up --service backend`. Generate a public domain for it
+   (Settings → Networking → Generate Domain, or `railway domain --service backend`).
+4. On `frontend`, set `START_CMD` (the Streamlit command above), `BACKEND_URL` = the
+   backend's public domain from step 3, and `API_KEY` = the same value as the
+   backend's. Deploy: `railway up --service frontend`. Generate a public domain for
+   it too.
+5. Open the frontend's public URL — that's the deployed app.
 
-`GET /health` on the backend is what Railway's healthcheck polls before marking a
-deploy healthy.
+Since neither service is GitHub-linked, redeploying after a code change means running
+`railway up --service <name>` again (or connecting the repo later via
+`railway service source connect` once the Railway GitHub App is authorized on the
+account, for auto-deploy on push).
 
 ## Next steps (per project plan)
 
