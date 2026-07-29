@@ -181,6 +181,35 @@ query
   → else  → worker revises using critic feedback → back to critic
 ```
 
+## Deployment (Railway)
+
+This repo deploys as **two Railway services** pointed at the same GitHub repo:
+
+| Service | Start command | Public? |
+|---|---|---|
+| `backend` | from `railway.json` — `uvicorn main:app --host 0.0.0.0 --port $PORT` | Yes — generate a domain |
+| `frontend` | override in service settings — `streamlit run streamlit_app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true` | Yes — generate a domain |
+
+Steps:
+
+1. `railway login`, then `railway init` from the repo root to create a project.
+2. In the Railway dashboard, add a service from this GitHub repo (becomes `backend`).
+   It picks up `railway.json` automatically. Set its environment variables:
+   `GROQ_API_KEY`, `TAVILY_API_KEY`, `API_KEY`, and optionally `DRAFT_MODEL`,
+   `CRITIC_MODEL`, `MAX_ITERATIONS`, `SCORE_THRESHOLD`, `TIMEOUT_SECONDS`,
+   `MAX_COST_USD` (all have working defaults if omitted). Generate a public domain
+   for it (Settings → Networking → Generate Domain).
+3. Add a **second** service from the same repo (becomes `frontend`). In its
+   Settings → Deploy, set a **Custom Start Command** overriding `railway.json`:
+   `streamlit run streamlit_app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true`.
+   Set its env vars: `BACKEND_URL` = the backend service's public domain (from
+   step 2), and `API_KEY` = the same value as the backend's `API_KEY`. Generate a
+   public domain for it too.
+4. Open the frontend's public URL — that's the deployed app.
+
+`GET /health` on the backend is what Railway's healthcheck polls before marking a
+deploy healthy.
+
 ## Next steps (per project plan)
 
 - Week 4 remaining: architecture diagram and tradeoff writeup (accuracy vs. cost
