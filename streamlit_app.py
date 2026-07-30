@@ -23,7 +23,7 @@ st.caption(
     "score clears the bar — with logging and guardrails (timeout, cost cap, "
     "tool-failure fallback)"
 )
-st.page_link("pages/1_Dashboard.py", label="View run dashboard", icon="📊")
+st.caption("See **Dashboard** and **History** in the sidebar for aggregate stats and past runs.")
 
 query = st.text_area(
     "Research question",
@@ -88,22 +88,4 @@ if st.button("Run research", type="primary"):
         except requests.exceptions.RequestException as e:
             st.error(f"Request to backend failed: {e}")
 
-with st.expander("Recent runs (from the logging DB)"):
-    st.caption(
-        "A quick raw feed of the latest calls. For aggregate stats, charts, and the "
-        "failure log, see the Dashboard page linked above."
-    )
-    if st.button("Refresh run log"):
-        try:
-            runs = requests.get(f"{BACKEND_URL}/runs", timeout=30).json()
-            if not runs:
-                st.caption("No runs logged yet.")
-            for r in runs:
-                st.markdown(
-                    f"`{r['created_at']}` — **{r['status']}** — "
-                    f"\"{r['query']}\" — score {r['final_score']}/10, "
-                    f"{r['iterations']} iter, {r['latency_seconds']}s, "
-                    f"${r['estimated_cost_usd']:.4f}"
-                )
-        except requests.exceptions.RequestException as e:
-            st.error(f"Could not load run log: {e}")
+st.page_link("pages/2_History.py", label="View full search history and past results", icon="📜")
