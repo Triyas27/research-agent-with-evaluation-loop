@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:8000")
+BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:8000").rstrip("/")
 SCORE_THRESHOLD = float(os.environ.get("SCORE_THRESHOLD", "7"))
 
 st.set_page_config(page_title="Dashboard", page_icon="📊", layout="wide")

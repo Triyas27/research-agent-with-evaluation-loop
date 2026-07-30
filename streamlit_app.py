@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:8000")
+BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:8000").rstrip("/")
 API_KEY = os.environ.get("API_KEY", "")
 
 st.set_page_config(page_title="Research Agent", page_icon="🔎")
