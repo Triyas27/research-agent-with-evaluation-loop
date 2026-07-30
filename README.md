@@ -1,8 +1,9 @@
 # Research Agent with Evaluation Loop — Week 3
 
-**Live:** [frontend](https://frontend-production-28989.up.railway.app) ·
-[backend API](https://backend-production-c15a.up.railway.app/health) — deployed on
-Railway, see [Deployment](#deployment-railway) below.
+**Live:** [frontend](https://frontend-uv6h.onrender.com) ·
+[backend API](https://backend-ehv8.onrender.com/health) — deployed free on Render,
+see [Deployment](#deployment-render) below. (Note: free tier spins down after ~15min
+idle — the first request after a quiet period takes 30–60s to wake back up.)
 
 Worker (search + draft) + critic (scores 0–10, structured feedback) + retry loop, plus
 this week's additions: every run is logged to SQLite, and the agent has guardrails for
@@ -185,45 +186,52 @@ query
   → else  → worker revises using critic feedback → back to critic
 ```
 
-## Deployment (Railway)
+## Deployment (Render)
 
-This repo deploys as **two Railway services** in one project, both built from the
-same code via `railway up` (CLI upload, not a GitHub-linked deploy). `railway.json`'s
-`startCommand` reads an optional `START_CMD` variable so one config file serves both
-services:
+This repo deploys as **two Render web services** (free tier), both connected to this
+GitHub repo — `render.yaml` at the repo root defines both so Render's Blueprint flow
+can create them together (in practice we created them individually as plain Web
+Services, since Blueprint wasn't easy to find in the current dashboard; either path
+works since both just read the same repo).
 
-| Service | `START_CMD` | Public? |
+| Service | Start command | Env vars |
 |---|---|---|
-| `backend` | *(unset — falls back to the default)* `uvicorn main:app --host 0.0.0.0 --port $PORT` | Yes — generate a domain |
-| `frontend` | `streamlit run streamlit_app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true` | Yes — generate a domain |
+| `backend` | `uvicorn main:app --host 0.0.0.0 --port $PORT` | `GROQ_API_KEY`, `TAVILY_API_KEY`, `API_KEY` |
+| `frontend` | `streamlit run streamlit_app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true` | `BACKEND_URL` (backend's URL, no trailing slash needed — the code strips it), `API_KEY` (same value as backend's) |
 
 Steps:
 
-1. `railway login`, then `railway init` to create a project.
-2. `railway add --service backend` and `railway add --service frontend` (empty
-   services — code gets pushed via `railway up`, not a GitHub link).
-3. On `backend`, set env vars: `GROQ_API_KEY`, `TAVILY_API_KEY`, `API_KEY` (required —
-   generate one with `python -c "import secrets; print(secrets.token_urlsafe(32))"`).
-   `DRAFT_MODEL`, `CRITIC_MODEL`, `MAX_ITERATIONS`, `SCORE_THRESHOLD`,
-   `TIMEOUT_SECONDS`, `MAX_COST_USD` are optional (working defaults if omitted).
-   Deploy: `railway up --service backend`. Generate a public domain for it
-   (Settings → Networking → Generate Domain, or `railway domain --service backend`).
-4. On `frontend`, set `START_CMD` (the Streamlit command above), `BACKEND_URL` = the
-   backend's public domain from step 3, and `API_KEY` = the same value as the
-   backend's. Deploy: `railway up --service frontend`. Generate a public domain for
-   it too.
-5. Open the frontend's public URL — that's the deployed app.
+1. On [render.com](https://render.com), **New +** → **Web Service**, connect this repo,
+   name it `backend`, set the build/start commands above, plan **Free**, add its env
+   vars (`API_KEY`: generate with
+   `python -c "import secrets; print(secrets.token_urlsafe(32))"`).
+2. Repeat for `frontend`, using the `backend` service's Render URL for `BACKEND_URL`.
+3. Both auto-deploy on every push to `main` since they're GitHub-connected — no manual
+   redeploy step needed, unlike the CLI-upload approach.
 
-Since neither service is GitHub-linked, redeploying after a code change means running
-`railway up --service <name>` again (or connecting the repo later via
-`railway service source connect` once the Railway GitHub App is authorized on the
-account, for auto-deploy on push).
+**Known limitations:**
+- Render's free tier spins a service down after ~15 minutes of inactivity; the first
+  request after that takes 30–60s to wake it back up.
+- The filesystem is ephemeral like most PaaS free tiers — `runs.db` (SQLite) resets on
+  every redeploy/restart. Fine for a demo; for persistence, move to a hosted Postgres
+  instance instead.
+- Both services install the *same* `requirements.txt`, so `frontend`'s build also pulls
+  in backend-only deps (LangGraph, Groq, etc.) it never uses — harmless, just a slower
+  build than strictly necessary. Splitting into `requirements-backend.txt` /
+  `requirements-frontend.txt` would fix that if build time becomes annoying.
 
-**Known limitation:** Railway's filesystem is ephemeral — `runs.db` (SQLite) lives on
-the backend container's local disk, so every redeploy wipes the run log. Fine for a
-demo; for the log to actually persist, attach a Railway Volume mounted at the
-backend's working directory (or move to a proper hosted DB — Postgres, e.g. — since
-concurrent writes to a SQLite file on a shared volume aren't safe either).
+<details>
+<summary>Previously deployed on Railway (paid) — kept for reference</summary>
+
+Two Railway services in one project, both pushed via `railway up` (CLI upload, not
+GitHub-linked) since linking a repo requires authorizing Railway's GitHub App first.
+`railway.json`'s `startCommand` reads an optional `START_CMD` variable so one config
+file serves both services (unset → backend's uvicorn command; set to the Streamlit
+command on `frontend`). Same env vars as above, set via `railway variables --set`.
+Railway is usage-billed beyond a small trial credit — moved to Render for a genuinely
+free deployment. `railway.json` is still in the repo if you want to redeploy there.
+
+</details>
 
 ## Next steps (per project plan)
 
