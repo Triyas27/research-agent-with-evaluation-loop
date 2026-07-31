@@ -275,6 +275,13 @@ Return ONLY valid JSON, no other text, in exactly this format:
 {{"grounding": <int 0-4>, "completeness": <int 0-3>, "coherence": <int 0-3>, \
 "feedback": "<specific, actionable feedback citing exact issues to fix>"}}
 
+JSON string rules: apostrophes and single quotes never need a backslash (write "the \
+draft's claim", not "the draft\\'s claim" - a backslash before a single quote is \
+invalid JSON and will break parsing). The only characters that ever need escaping in \
+a JSON string are a literal double-quote (\") and a literal backslash (\\). When \
+referring to a phrase from the draft, paraphrase it instead of quoting it verbatim -\
+ that sidesteps escaping mistakes entirely.
+
 User question: {state['query']}
 
 Sources:

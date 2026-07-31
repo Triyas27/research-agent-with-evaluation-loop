@@ -220,6 +220,30 @@ async def test_critic_node_scores_valid_json(monkeypatch):
     assert result["best_draft"] == "a draft"
 
 
+async def test_critic_prompt_warns_against_backslash_escaped_quotes(monkeypatch):
+    """Regression test: a live run against Groq failed with json_validate_failed
+    because the critic quoted a phrase from the draft using Python/JS-style \\'
+    escaping, which isn't valid JSON (single quotes never need escaping). The fix
+    was prompt-level guidance; this locks in that the "bad" example actually renders
+    a literal backslash (an earlier version of this fix had Python's own string
+    escaping silently swallow it, making the good/bad example identical and useless)."""
+    captured = {}
+
+    async def fake_create(**kw):
+        captured["prompt"] = kw["messages"][0]["content"]
+        return make_groq_response(
+            '{"grounding": 4, "completeness": 3, "coherence": 3, "feedback": "ok"}'
+        )
+
+    monkeypatch.setattr(main.groq_client.chat.completions, "create", fake_create)
+    state = make_state(search_results=SOURCES, draft="a draft", iteration=1)
+    await main.critic_node(state)
+
+    prompt = captured["prompt"]
+    assert "never need a backslash" in prompt
+    assert "draft\\'s claim" in prompt  # the literal bad example must contain a real backslash
+
+
 async def test_critic_node_preserves_fractional_scores(monkeypatch):
     """A critic returning 3.5 must not be silently floored to 3 — that's the exact
     rubric this project's whole pitch is built around."""
