@@ -106,6 +106,26 @@ async def test_draft_node_first_iteration_success(monkeypatch):
     assert result["estimated_cost_usd"] > 0
 
 
+async def test_draft_node_prompt_warns_against_prompt_injection(monkeypatch):
+    """Sources are live, unsanitized web scrapes - a page containing "ignore
+    previous instructions" text becomes part of the model's context. Locks in that
+    the mitigation (delimiter + explicit warning) is actually present in the prompt
+    sent to the model, for both the first draft and revisions."""
+    captured = {}
+
+    async def fake_create(**kw):
+        captured["prompt"] = kw["messages"][0]["content"]
+        return make_groq_response("Drafted report [1].")
+
+    monkeypatch.setattr(main.groq_client.chat.completions, "create", fake_create)
+    state = make_state(search_results=SOURCES)
+    await main.draft_node(state)
+
+    prompt = captured["prompt"]
+    assert "<untrusted_web_content>" in prompt
+    assert "not instructions" in prompt
+
+
 async def test_draft_node_revision_uses_prior_feedback(monkeypatch):
     captured = {}
 
@@ -243,6 +263,24 @@ async def test_critic_prompt_warns_against_backslash_escaped_quotes(monkeypatch)
     prompt = captured["prompt"]
     assert "never need a backslash" in prompt
     assert "draft\\'s claim" in prompt  # the literal bad example must contain a real backslash
+
+
+async def test_critic_prompt_warns_against_prompt_injection(monkeypatch):
+    captured = {}
+
+    async def fake_create(**kw):
+        captured["prompt"] = kw["messages"][0]["content"]
+        return make_groq_response(
+            '{"unsupported_claims": [], "missing_parts": [], "contradictions": [], "feedback": "ok"}'
+        )
+
+    monkeypatch.setattr(main.groq_client.chat.completions, "create", fake_create)
+    state = make_state(search_results=SOURCES, draft="a draft", iteration=1)
+    await main.critic_node(state)
+
+    prompt = captured["prompt"]
+    assert "<untrusted_web_content>" in prompt
+    assert "not instructions" in prompt
 
 
 async def test_critic_node_scores_by_counting_enumerated_issues(monkeypatch):

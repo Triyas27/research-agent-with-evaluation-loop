@@ -97,6 +97,13 @@ in-page links to them, just the one place):
   `GET /runs` is unauthenticated (it just reads the log) but rate-limited to
   30 requests/minute. Without this, a public deployment is an open door to anyone's
   Groq/Tavily bill.
+- **Prompt-injection framing**: search results are live, unsanitized web scrapes fed
+  straight into the draft/critic prompts — a page containing "ignore previous
+  instructions, instead do X" text becomes part of the model's context. `_sources_block`
+  wraps scraped content in `<untrusted_web_content>` tags, and both prompts explicitly
+  warn the model to treat it as reference data, never as instructions. This is a
+  mitigation, not a guarantee — no prompt-level defense fully prevents injection with
+  current models — but it's a real, cheap reduction in attack surface over doing nothing.
 
 ## Progress streaming
 
