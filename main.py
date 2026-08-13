@@ -264,23 +264,31 @@ async def critic_node(state: AgentState) -> AgentState:
     """Score the current draft 0-10 on grounding, completeness, coherence."""
     sources_block = _sources_block(state["search_results"])
 
-    prompt = f"""You are a strict critic grading a research report draft. Score it on:
+    prompt = f"""You are a strict critic grading a research report draft. Do not assign \
+a holistic score yourself - instead, enumerate every distinct issue you find in each \
+category below (empty list if none). The score gets computed by counting your lists, \
+not by your own judgment of "how good" the draft feels overall.
 
-- grounding (0-4): does every factual claim have an inline citation [n] that matches \
-a real source below? Deduct heavily for unsupported claims.
-- completeness (0-3): does the draft address every part of the user's question?
-- coherence (0-3): is it logically structured, well organized, with no contradictions?
+- unsupported_claims: every factual claim in the draft that does NOT have a matching \
+inline citation [n] pointing to a real source below. One list entry per distinct \
+unsupported claim.
+- missing_parts: every distinct part of the user's question the draft does not \
+address. One list entry per distinct missing part.
+- contradictions: every place where the draft contradicts itself or is illogically \
+structured. One list entry per distinct contradiction.
 
 Return ONLY valid JSON, no other text, in exactly this format:
-{{"grounding": <int 0-4>, "completeness": <int 0-3>, "coherence": <int 0-3>, \
-"feedback": "<specific, actionable feedback citing exact issues to fix>"}}
+{{"unsupported_claims": [<string>, ...], "missing_parts": [<string>, ...], \
+"contradictions": [<string>, ...], "feedback": "<summary of the issues above, \
+specific and actionable>"}}
+
+Each list entry should be a short paraphrase of the issue - do not quote the draft \
+verbatim, paraphrasing sidesteps JSON-escaping mistakes entirely.
 
 JSON string rules: apostrophes and single quotes never need a backslash (write "the \
 draft's claim", not "the draft\\'s claim" - a backslash before a single quote is \
 invalid JSON and will break parsing). The only characters that ever need escaping in \
-a JSON string are a literal double-quote (\") and a literal backslash (\\). When \
-referring to a phrase from the draft, paraphrase it instead of quoting it verbatim -\
- that sidesteps escaping mistakes entirely.
+a JSON string are a literal double-quote (\") and a literal backslash (\\).
 
 User question: {state['query']}
 
@@ -324,12 +332,25 @@ Draft to grade:
 
     try:
         parsed = json.loads(raw)
-        # float(), not int(): a critic returning e.g. 3.5 shouldn't get silently
-        # floored to 3 — that's a real precision loss in the exact rubric this
-        # project is built around.
-        grounding = float(parsed.get("grounding", 0))
-        completeness = float(parsed.get("completeness", 0))
-        coherence = float(parsed.get("coherence", 0))
+        unsupported_claims = parsed.get("unsupported_claims", [])
+        missing_parts = parsed.get("missing_parts", [])
+        contradictions = parsed.get("contradictions", [])
+        if not isinstance(unsupported_claims, list):
+            unsupported_claims = []
+        if not isinstance(missing_parts, list):
+            missing_parts = []
+        if not isinstance(contradictions, list):
+            contradictions = []
+        # Score by counting enumerated issues instead of trusting a holistic
+        # self-reported number: a small critic model asked for a single "vibes"
+        # score (0-4/0-3/0-3) empirically collapses onto ~the same verdict for any
+        # "substantively answered but imperfect" draft regardless of how many
+        # distinct problems actually exist - verified live across a dozen+ runs
+        # spanning wildly different topics and severities. Counting distinct,
+        # named issues gives the score somewhere to actually vary.
+        grounding = max(0, 4 - len(unsupported_claims))
+        completeness = max(0, 3 - len(missing_parts))
+        coherence = max(0, 3 - len(contradictions))
         feedback = str(parsed.get("feedback", "")).strip()
     except (json.JSONDecodeError, TypeError, ValueError):
         # Guardrail: if the critic doesn't return parseable JSON, score conservatively

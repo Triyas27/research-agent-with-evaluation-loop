@@ -11,7 +11,7 @@ import main
 from conftest import make_groq_response
 
 SOURCES = [{"title": "A", "url": "http://a.example", "content": "some content"}]
-GOOD_CRITIC_JSON = '{"grounding": 4, "completeness": 3, "coherence": 3, "feedback": "Solid."}'
+GOOD_CRITIC_JSON = '{"unsupported_claims": [], "missing_parts": [], "contradictions": [], "feedback": "Solid."}'
 
 
 @pytest.fixture
@@ -130,7 +130,14 @@ def test_research_exhausts_max_iterations_when_score_never_clears_threshold(
 
     monkeypatch.setattr(main.tavily_client, "search", fake_search)
 
-    low_score_json = '{"grounding": 1, "completeness": 0, "coherence": 0, "feedback": "weak"}'
+    # grounding=1 (4-3), completeness=0 (3-3), coherence=0 (3-3) once critic_node
+    # counts these lists -> total 1, well under SCORE_THRESHOLD
+    low_score_json = json.dumps({
+        "unsupported_claims": ["a", "b", "c"],
+        "missing_parts": ["a", "b", "c"],
+        "contradictions": ["a", "b", "c"],
+        "feedback": "weak",
+    })
 
     async def fake_create(**kw):
         if kw["model"] == main.CRITIC_MODEL:

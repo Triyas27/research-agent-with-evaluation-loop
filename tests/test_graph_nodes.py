@@ -1,3 +1,4 @@
+import json
 import time
 
 import pytest
@@ -208,7 +209,7 @@ async def test_critic_node_scores_valid_json(monkeypatch):
         main.groq_client.chat.completions,
         "create",
         _async_return(make_groq_response(
-            '{"grounding": 4, "completeness": 3, "coherence": 3, "feedback": "Solid."}'
+            '{"unsupported_claims": [], "missing_parts": [], "contradictions": [], "feedback": "Solid."}'
         )),
     )
     state = make_state(search_results=SOURCES, draft="a draft", iteration=1)
@@ -232,7 +233,7 @@ async def test_critic_prompt_warns_against_backslash_escaped_quotes(monkeypatch)
     async def fake_create(**kw):
         captured["prompt"] = kw["messages"][0]["content"]
         return make_groq_response(
-            '{"grounding": 4, "completeness": 3, "coherence": 3, "feedback": "ok"}'
+            '{"unsupported_claims": [], "missing_parts": [], "contradictions": [], "feedback": "ok"}'
         )
 
     monkeypatch.setattr(main.groq_client.chat.completions, "create", fake_create)
@@ -244,22 +245,66 @@ async def test_critic_prompt_warns_against_backslash_escaped_quotes(monkeypatch)
     assert "draft\\'s claim" in prompt  # the literal bad example must contain a real backslash
 
 
-async def test_critic_node_preserves_fractional_scores(monkeypatch):
-    """A critic returning 3.5 must not be silently floored to 3 — that's the exact
-    rubric this project's whole pitch is built around."""
+async def test_critic_node_scores_by_counting_enumerated_issues(monkeypatch):
+    """Core property of the counting-based rubric: grounding/completeness/coherence
+    come from 4/3/3 minus the length of each issue list, not from a number the
+    critic reports itself. A holistic "just give me a 0-10 vibes score" design was
+    found live to collapse onto ~the same verdict (3/2/2) for any "substantively
+    answered but imperfect" draft regardless of how many distinct problems actually
+    existed - verified across a dozen+ live runs on wildly different topics. This
+    counting design gives the score somewhere to actually vary."""
     monkeypatch.setattr(
         main.groq_client.chat.completions,
         "create",
-        _async_return(make_groq_response(
-            '{"grounding": 3.5, "completeness": 2.5, "coherence": 2, "feedback": "Mostly solid."}'
-        )),
+        _async_return(make_groq_response(json.dumps({
+            "unsupported_claims": ["claim A", "claim B"],
+            "missing_parts": ["part A"],
+            "contradictions": [],
+            "feedback": "Two unsupported claims, one part unanswered.",
+        }))),
     )
     state = make_state(search_results=SOURCES, draft="a draft", iteration=1)
     result = await main.critic_node(state)
     score = result["score_history"][0]
-    assert score["grounding"] == 3.5
-    assert score["completeness"] == 2.5
-    assert score["total"] == 8.0
+    assert score["grounding"] == 2  # 4 - 2 unsupported claims
+    assert score["completeness"] == 2  # 3 - 1 missing part
+    assert score["coherence"] == 3  # 3 - 0 contradictions
+    assert score["total"] == 7
+
+
+async def test_critic_node_score_never_goes_negative(monkeypatch):
+    """More issues than the category max shouldn't produce a negative score."""
+    monkeypatch.setattr(
+        main.groq_client.chat.completions,
+        "create",
+        _async_return(make_groq_response(json.dumps({
+            "unsupported_claims": ["a", "b", "c", "d", "e", "f"],  # 6 > max of 4
+            "missing_parts": [],
+            "contradictions": [],
+            "feedback": "Badly unsupported.",
+        }))),
+    )
+    state = make_state(search_results=SOURCES, draft="a draft", iteration=1)
+    result = await main.critic_node(state)
+    assert result["score_history"][0]["grounding"] == 0
+
+
+async def test_critic_node_coerces_non_list_issue_fields(monkeypatch):
+    """If the critic returns a malformed shape (e.g. a string instead of a list) for
+    one of the issue fields, treat it as no issues found rather than crashing."""
+    monkeypatch.setattr(
+        main.groq_client.chat.completions,
+        "create",
+        _async_return(make_groq_response(json.dumps({
+            "unsupported_claims": "not a list",
+            "missing_parts": [],
+            "contradictions": [],
+            "feedback": "ok",
+        }))),
+    )
+    state = make_state(search_results=SOURCES, draft="a draft", iteration=1)
+    result = await main.critic_node(state)
+    assert result["score_history"][0]["grounding"] == 4
 
 
 async def test_critic_node_records_draft_text_per_iteration(monkeypatch):
@@ -267,7 +312,7 @@ async def test_critic_node_records_draft_text_per_iteration(monkeypatch):
         main.groq_client.chat.completions,
         "create",
         _async_return(make_groq_response(
-            '{"grounding": 4, "completeness": 3, "coherence": 3, "feedback": "Solid."}'
+            '{"unsupported_claims": [], "missing_parts": [], "contradictions": [], "feedback": "Solid."}'
         )),
     )
     state = make_state(search_results=SOURCES, draft="the draft text for this iteration", iteration=1)
@@ -317,11 +362,16 @@ async def test_critic_node_llm_failure_does_not_clobber_earlier_best(monkeypatch
     assert result["best_draft"] == "earlier, better draft"
 
 
-def _critic_returning(total_grounding, total_completeness, total_coherence, monkeypatch):
-    content = (
-        f'{{"grounding": {total_grounding}, "completeness": {total_completeness}, '
-        f'"coherence": {total_coherence}, "feedback": "fb"}}'
-    )
+def _critic_returning(grounding, completeness, coherence, monkeypatch):
+    """Build a fake critic response that will score exactly (grounding, completeness,
+    coherence) once critic_node counts issue-list lengths (grounding = 4 -
+    len(unsupported_claims), etc.) - callers pass target scores, not raw JSON."""
+    content = json.dumps({
+        "unsupported_claims": [f"issue {i}" for i in range(4 - grounding)],
+        "missing_parts": [f"missing {i}" for i in range(3 - completeness)],
+        "contradictions": [f"contradiction {i}" for i in range(3 - coherence)],
+        "feedback": "fb",
+    })
     monkeypatch.setattr(
         main.groq_client.chat.completions, "create", _async_return(make_groq_response(content))
     )
