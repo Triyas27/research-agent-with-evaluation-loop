@@ -223,9 +223,27 @@ testing this deployed on Render, not hypothetical ones.
 
 Single-iteration queries (the common case — search, draft, one critic pass, done):
 ~5-6 seconds, ~6,700-7,600 tokens, ~$0.002-0.003 per query. Multi-iteration runs that
-hit a guardrail (see below) run 90+ seconds and ~26,000 tokens, ~4x the cost of a
-clean pass — the retry loop is not free, which is exactly why `TIMEOUT_SECONDS` and
-`MAX_COST_USD` exist as hard stops rather than trusting `MAX_ITERATIONS` alone.
+hit a guardrail (see below) run 90+ seconds and ~26,000-27,000 tokens, ~3-4x the cost
+of a clean pass — the retry loop is not free, which is exactly why `TIMEOUT_SECONDS`
+and `MAX_COST_USD` exist as hard stops rather than trusting `MAX_ITERATIONS` alone.
+
+**Token optimization attempt, measured honestly.** `_sources_block` gets re-sent in
+full on every draft and critic call within a run, so trimming `SOURCE_CONTENT_CHARS`
+from 1500 to 1000 looked like an easy 15-20%+ win on paper. Measured against the same
+before/after query pair used throughout this section: **0.7-0.9% actual reduction**
+(7,939 → 7,887 tokens on the easy query; ~9,083 → ~8,999 tokens/iteration on the
+hard one), scores unchanged. The assumption behind the optimization was wrong —
+Tavily's returned content per source is usually already well under 1,000 characters,
+so the 1500 cap was rarely the binding constraint; lowering it only trimmed the rare
+long outlier. Kept the change (it's free — same quality, marginally cheaper, no
+downside found), but the real cost driver is evidently elsewhere: most likely the
+draft's own generation (`max_tokens=2000`, called once per iteration) and the
+full previous-draft text re-included on every revision, not the source content.
+Reducing either of those trades directly against quality (a shorter draft budget or a
+summarized-instead-of-full prior draft) rather than being a free trim, which is why
+this project didn't pursue it further without first deciding that tradeoff was worth
+it. Lesson: measure before *and after* an optimization, not just before — the
+predicted win and the actual win were off by more than 15x.
 
 ### The critic calibration story — three iterations, in order
 

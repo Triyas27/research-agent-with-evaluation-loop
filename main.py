@@ -52,13 +52,17 @@ TIMEOUT_SECONDS = float(os.environ.get("TIMEOUT_SECONDS", "60"))
 MAX_COST_USD = float(os.environ.get("MAX_COST_USD", "0.05"))
 LLM_MAX_RETRIES = int(os.environ.get("LLM_MAX_RETRIES", "2"))
 
-# Token usage optimization: _sources_block gets re-sent in full on *every* draft and
-# critic call within a run (up to 6 times for a 3-iteration run), so this one number
-# has an outsized effect on cost. Trimmed from 1500->1000; see the Tradeoffs &
-# Failure Log section in the README for the before/after verification against this
-# project's calibration query set before lowering it further - too little content
-# per source starves grounding and produces *more* false "unsupported claim" flags
-# under the counting-based critic, not fewer.
+# Token usage optimization, measured (not assumed): _sources_block is re-sent in
+# full on every draft/critic call within a run, so trimming 1500->1000 looked like
+# an easy double-digit-percent win on paper. Measured effect against this project's
+# calibration query set: ~1% - Tavily's returned content per source is usually
+# already well under 1000 chars, so 1500 was rarely the binding constraint. See the
+# Tradeoffs & Failure Log section in the README for the full before/after numbers
+# and why the real cost driver is evidently elsewhere. Kept anyway (free, no quality
+# downside found) but don't expect much from lowering it further, and don't lower it
+# past what real source content needs - too little content per source starves
+# grounding and produces *more* false "unsupported claim" flags under the
+# counting-based critic, not fewer.
 SOURCE_CONTENT_CHARS = int(os.environ.get("SOURCE_CONTENT_CHARS", "1000"))
 
 # Groq's free tier bills nothing, but we still track *what it would cost* on a paid
