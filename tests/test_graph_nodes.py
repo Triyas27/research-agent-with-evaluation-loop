@@ -45,6 +45,24 @@ def _async_raise(exc):
     return _fn
 
 
+# --- _sources_block -----------------------------------------------------------
+
+def test_sources_block_truncates_content_to_configured_length():
+    """Token usage optimization: content per source is capped at
+    SOURCE_CONTENT_CHARS, since this whole block gets re-sent on every draft/critic
+    call within a run (up to 6x for a 3-iteration run)."""
+    long_content = "x" * 5000
+    block = main._sources_block([{"title": "A", "url": "http://a.example", "content": long_content}])
+    assert "x" * main.SOURCE_CONTENT_CHARS in block
+    assert "x" * (main.SOURCE_CONTENT_CHARS + 1) not in block
+
+
+def test_sources_block_wraps_content_in_untrusted_delimiters():
+    block = main._sources_block(SOURCES)
+    assert block.startswith("<untrusted_web_content>")
+    assert block.endswith("</untrusted_web_content>")
+
+
 # --- search_node -------------------------------------------------------------
 # search_node/draft_node/critic_node are async (real Groq/Tavily calls), so these
 # tests are async too — see pytest.ini (asyncio_mode = auto).

@@ -52,6 +52,15 @@ TIMEOUT_SECONDS = float(os.environ.get("TIMEOUT_SECONDS", "60"))
 MAX_COST_USD = float(os.environ.get("MAX_COST_USD", "0.05"))
 LLM_MAX_RETRIES = int(os.environ.get("LLM_MAX_RETRIES", "2"))
 
+# Token usage optimization: _sources_block gets re-sent in full on *every* draft and
+# critic call within a run (up to 6 times for a 3-iteration run), so this one number
+# has an outsized effect on cost. Trimmed from 1500->1000; see the Tradeoffs &
+# Failure Log section in the README for the before/after verification against this
+# project's calibration query set before lowering it further - too little content
+# per source starves grounding and produces *more* false "unsupported claim" flags
+# under the counting-based critic, not fewer.
+SOURCE_CONTENT_CHARS = int(os.environ.get("SOURCE_CONTENT_CHARS", "1000"))
+
 # Groq's free tier bills nothing, but we still track *what it would cost* on a paid
 # tier so the cost-cap guardrail and the Week 4 writeup have real numbers to show.
 # Adjust these to match current Groq pricing if you move off the free tier.
@@ -119,7 +128,7 @@ def _sources_block(sources: List[Dict[str, Any]]) -> str:
     body = "\n\n".join(
         f"[{i + 1}] {r.get('title', 'Untitled')}\n"
         f"URL: {r.get('url', 'unknown')}\n"
-        f"Content: {(r.get('content') or '')[:1500]}"
+        f"Content: {(r.get('content') or '')[:SOURCE_CONTENT_CHARS]}"
         for i, r in enumerate(sources)
     )
     return f"<untrusted_web_content>\n{body}\n</untrusted_web_content>"
