@@ -211,6 +211,92 @@ flowchart TD
     Decide -- "else, keep trying" --> Draft
 ```
 
+## Tradeoffs & failure log
+
+The project plan asked for "accuracy went from X% to Y% after adding the critic
+loop" — that's an A/B claim (critic on vs. off) this project never actually measured,
+so rather than invent a number that sounds precise but isn't, here's what's real:
+cost/latency figures pulled from live runs, and three genuine incidents found by
+testing this deployed on Render, not hypothetical ones.
+
+### Cost and latency (real numbers, not estimates)
+
+Single-iteration queries (the common case — search, draft, one critic pass, done):
+~5-6 seconds, ~6,700-7,600 tokens, ~$0.002-0.003 per query. Multi-iteration runs that
+hit a guardrail (see below) run 90+ seconds and ~26,000 tokens, ~4x the cost of a
+clean pass — the retry loop is not free, which is exactly why `TIMEOUT_SECONDS` and
+`MAX_COST_USD` exist as hard stops rather than trusting `MAX_ITERATIONS` alone.
+
+### The critic calibration story — three iterations, in order
+
+**1. Found a scoring ceiling.** Comparison-style queries ("compare pricing of 5 SaaS
+tools", "compare pricing/security/support of 8 cloud providers") reliably scored
+**exactly 3/4 grounding, 2/3 completeness, 2/3 coherence = 7.0/10** — verified across
+four separate live runs on genuinely different topics and draft content, including one
+where the critic's own feedback enumerated four distinct problems yet still produced
+the identical 3/2/2. The original critic prompt asked for a single holistic 0-4/0-3/0-3
+judgment; that self-reported number wasn't tracking how many actual issues existed, it
+was converging on a fixed "flawed but substantive" verdict regardless of severity.
+Meanwhile 2-way comparisons and single-topic deep-dives (Marbury v. Madison,
+Maastricht vs. Lisbon, microservices vs. monolith) scored 8-10, so the retry loop was
+effectively dead for anything except outright tool failures.
+
+**2. Redesigned scoring, overcorrected.** Rather than ask the critic to self-report a
+score, `critic_node` now asks it to *enumerate* specific issues
+(`unsupported_claims`, `missing_parts`, `contradictions` as JSON string lists) and
+computes the score in Python by counting list lengths. This broke the ceiling — the
+same 5-tool comparison that scored exactly 7.0 three times in a row dropped to a real
+3.0 and genuinely triggered multiple revisions. But it overcorrected: a well-cited,
+accurate "what is the capital of Germany" report — the kind that always scored 9-10
+before — scored **0-3/10** and burned 3 iterations plus a timeout. Forcing the model
+to always produce *something* per issue category, even when nothing was genuinely
+wrong, appears to push a small model (`llama-3.1-8b-instant`) toward manufacturing
+vague, borderline entries just to satisfy the schema.
+
+**3. Tightened the prompt.** Added explicit "only list an issue if you can point to
+the specific sentence/statement responsible; if you cannot, the list MUST be empty"
+guidance per category, plus a direct statement that a genuinely good draft should
+produce three empty lists. Re-verified both cases: the Germany query returned to 8/10
+with one specific, real issue named (a historical-timeline detail) instead of vague
+across-the-board complaints; the SaaS comparison still scored a genuine 5→6 across two
+iterations with named, specific complaints ("the unsupported claim is about ClickUp's
+pricing"), not a fixed 7.0.
+
+The lesson that generalizes beyond this project: asking a small model for a single
+holistic judgment collapses onto a narrow band of "safe" verdicts; asking it to
+enumerate and then computing the score deterministically gives real signal — but
+only if the prompt is explicit that an empty list is an acceptable, even expected,
+answer. A counting-based rubric with no floor on "how many issues to find" will find
+issues whether or not they exist.
+
+### Failure log
+
+**`critic_failed` from a JSON-escaping bug (found live, not by the test suite).** A
+niche, quote-heavy query ("terms of the 1975 Helsinki Accords' Basket III
+provisions") crashed the critic call with Groq's `json_validate_failed`: the critic
+quoted a phrase from the draft using Python/JS-style `\'` escaping, which isn't valid
+JSON (single quotes never need escaping — only `"` and `\` do). The guardrail caught
+it correctly — HTTP 200 returned, the perfectly good draft was preserved, status
+logged as `tool_failure` — but the run was still unscored. Root-caused and fixed with
+explicit JSON-escaping rules in the critic prompt (see `critic_node`); re-ran the
+exact same query after the fix and it scored 10/10 with no crash. Four more diverse
+follow-up queries confirmed the fix held.
+
+**Revisions don't guarantee improvement.** During calibration testing (before the
+prompt was tightened), one run's score went 3.0 → 3.0 → 2.0 across three iterations —
+the worker's revisions, attempting to add the depth the critic asked for, introduced
+new grounding gaps rather than only fixing the flagged ones. The retry loop assumes
+revision moves toward the threshold; that's not guaranteed with a small worker model,
+and `MAX_ITERATIONS` exists partly to bound the damage when it doesn't.
+
+**The `status: success` ambiguity.** Documented on the architecture diagram above:
+exhausting `MAX_ITERATIONS` without ever clearing `SCORE_THRESHOLD` logs identically
+to a real success in the `status` column — only `final_score` distinguishes them.
+Not fixed, because doing so would mean deciding what a "gave up, still low score"
+status bucket should be called and whether `/runs` consumers depend on the current
+five-value enum — a real product decision, not a bug, and one this project doesn't
+have enough usage data to make confidently yet.
+
 ## Deployment (Render)
 
 This repo deploys as **two Render web services** (free tier), both connected to this
@@ -258,7 +344,10 @@ free deployment. `railway.json` is still in the repo if you want to redeploy the
 
 </details>
 
-## Next steps (per project plan)
+## Project plan status
 
-- Week 4 remaining: architecture diagram and tradeoff writeup (accuracy vs. cost
-  vs. latency). Dashboard and failure-log section are done (see above).
+Everything the original plan asked for is done: worker/critic loop, logging,
+guardrails, dashboard, failure log, architecture diagram, and tradeoff writeup (see
+above). Deployment moved from Railway to Render partway through for cost reasons —
+see the collapsed section above for how the Railway path worked, in case that's ever
+useful again.
