@@ -197,17 +197,17 @@ scored 4/10" and "cleared the bar" look identical in the log's `status` column
 
 ```mermaid
 flowchart TD
-    Start(["POST /research"]) --> Search["search_node<br/>Tavily, up to 8 results"]
-    Search -- "search_failed" --> ToolFail(["status: tool_failure<br/>fallback message, HTTP 200"])
-    Search -- "results found" --> Draft["draft_node<br/>Groq: write (iter 1) or revise (iter 2+)"]
+    Start(["POST /research"]) --> Search["search_node <br/>Tavily, up to 8 results"]
+    Search -- "search_failed" --> ToolFail(["status: tool_failure <br/>fallback message, HTTP 200"])
+    Search -- "results found" --> Draft["draft_node <br/>Groq: write (iter 1) or revise (iter 2+)"]
     Draft -- "draft_failed, or no sources" --> ToolFail
-    Draft -- "drafted" --> Critic["critic_node<br/>Groq: count unsupported claims,<br/>missing parts, contradictions"]
-    Critic -- "critic_failed<br/>e.g. malformed JSON" --> ToolFail
+    Draft -- "drafted" --> Critic["critic_node <br/>Groq: count unsupported claims, <br/>missing parts, contradictions"]
+    Critic -- "critic_failed <br/>e.g. malformed JSON" --> ToolFail
     Critic --> Decide{"stop condition met?"}
-    Decide -- "score >= SCORE_THRESHOLD (7)" --> Success(["status: success<br/>return report"])
-    Decide -- "60s elapsed<br/>TIMEOUT_SECONDS" --> Timeout(["status: timeout<br/>return best draft seen"])
-    Decide -- "$0.05 spent<br/>MAX_COST_USD" --> CostCap(["status: cost_cap<br/>return best draft seen"])
-    Decide -- "3 iterations done<br/>MAX_ITERATIONS, score still low" --> MaxIter(["status: success (!)<br/>return best draft anyway"])
+    Decide -- "score >= SCORE_THRESHOLD (7)" --> Success(["status: success <br/>return report"])
+    Decide -- "60s elapsed <br/>TIMEOUT_SECONDS" --> Timeout(["status: timeout <br/>return best draft seen"])
+    Decide -- "$0.05 spent <br/>MAX_COST_USD" --> CostCap(["status: cost_cap <br/>return best draft seen"])
+    Decide -- "3 iterations done <br/>MAX_ITERATIONS, score still low" --> MaxIter(["status: success (!) <br/>return best draft anyway"])
     Decide -- "else, keep trying" --> Draft
 ```
 
