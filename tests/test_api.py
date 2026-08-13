@@ -76,6 +76,7 @@ def test_research_success_path_logs_and_returns_report(api_client, mock_happy_pa
     data = resp.json()
     assert data["final_score"] == 10
     assert data["iterations"] == 1
+    assert data["status"] == "success"
     assert "met threshold" in data["stop_reason"]
 
     runs = api_client.get("/runs").json()
@@ -97,6 +98,7 @@ def test_research_tool_failure_returns_200_not_500(api_client, monkeypatch):
     assert resp.status_code == 200
     data = resp.json()
     assert "search tool failed" in data["report"]
+    assert data["status"] == "tool_failure"
 
     runs = api_client.get("/runs").json()
     assert runs[0]["status"] == "tool_failure"

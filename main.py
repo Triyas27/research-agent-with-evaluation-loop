@@ -449,6 +449,7 @@ class ResearchResponse(BaseModel):
     latency_seconds: float
     iterations: int
     final_score: float
+    status: str
     score_history: List[CriticScore]
     stop_reason: str
     total_tokens: int
@@ -541,6 +542,7 @@ def _finalize(run_id: str, query: str, result: AgentState, latency: float) -> Re
         latency_seconds=round(latency, 2),
         iterations=result["iteration"],
         final_score=result["best_score"],
+        status=status,
         score_history=result["score_history"],
         stop_reason=result["stop_reason"],
         total_tokens=result["total_tokens"],

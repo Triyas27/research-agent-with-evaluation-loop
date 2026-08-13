@@ -57,6 +57,12 @@ df = pd.DataFrame(runs)
 df["created_at"] = pd.to_datetime(df["created_at"])
 df["final_score"] = pd.to_numeric(df["final_score"], errors="coerce")
 
+# tool_failure/error runs log final_score=0 as a placeholder (the critic never ran,
+# so there's nothing to score) - treat that as "not scored", not "scored zero", or
+# every guardrail trip would misleadingly drag the score distribution toward 0.
+NOT_SCORED_STATUSES = {"tool_failure", "error"}
+df["scored_final_score"] = df["final_score"].where(~df["status"].isin(NOT_SCORED_STATUSES))
+
 # --- Summary metrics -----------------------------------------------------------
 
 total_runs = len(df)
@@ -80,9 +86,10 @@ col1, col2 = st.columns(2)
 
 with col1:
     st.subheader("Score distribution")
+    st.caption("Excludes tool_failure/error runs — those were never scored, not scored zero.")
     fig = px.histogram(
-        df.dropna(subset=["final_score"]),
-        x="final_score",
+        df.dropna(subset=["scored_final_score"]),
+        x="scored_final_score",
         nbins=11,
         range_x=[0, 10],
     )
@@ -142,6 +149,10 @@ if failures.empty:
     st.success("Every logged run met the score threshold.")
 else:
     failures["severity"] = failures["status"].map(SEVERITY).fillna(failures["status"])
+    failures["score_display"] = failures.apply(
+        lambda r: "not scored" if r["status"] in NOT_SCORED_STATUSES else r["final_score"],
+        axis=1,
+    )
     st.dataframe(
         failures[
             [
@@ -149,11 +160,11 @@ else:
                 "created_at",
                 "query",
                 "iterations",
-                "final_score",
+                "score_display",
                 "stop_reason",
                 "error_message",
             ]
-        ],
+        ].rename(columns={"score_display": "final_score"}),
         use_container_width=True,
         hide_index=True,
     )

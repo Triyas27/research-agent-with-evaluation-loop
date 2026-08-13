@@ -62,7 +62,11 @@ if st.button("Run research", type="primary"):
 
             if data is not None:
                 col1, col2, col3, col4 = st.columns(4)
-                col1.metric("Final score", f"{data['final_score']:.1f}/10")
+                if data["status"] in ("tool_failure", "error"):
+                    col1.metric("Final score", "Not scored")
+                    col1.caption("Critic/tool failed — this isn't a quality score.")
+                else:
+                    col1.metric("Final score", f"{data['final_score']:.1f}/10")
                 col2.metric("Iterations", data["iterations"])
                 col3.metric("Latency", f"{data['latency_seconds']}s")
                 col4.metric("Est. cost", f"${data['estimated_cost_usd']:.4f}")

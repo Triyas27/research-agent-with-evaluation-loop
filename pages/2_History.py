@@ -76,8 +76,11 @@ def best_iteration(score_history):
     return best
 
 
+NOT_SCORED_STATUSES = {"tool_failure", "error"}
+
 for _, row in filtered.iterrows():
-    label = f"`{row['created_at']}` — **{row['status']}** — \"{row['query']}\" — {row['final_score']}/10"
+    score_label = "not scored" if row["status"] in NOT_SCORED_STATUSES else f"{row['final_score']}/10"
+    label = f"`{row['created_at']}` — **{row['status']}** — \"{row['query']}\" — {score_label}"
     with st.expander(label):
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Iterations", row["iterations"])
