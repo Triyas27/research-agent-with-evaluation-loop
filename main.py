@@ -292,12 +292,22 @@ category below (empty list if none). The score gets computed by counting your li
 not by your own judgment of "how good" the draft feels overall.
 
 - unsupported_claims: every factual claim in the draft that does NOT have a matching \
-inline citation [n] pointing to a real source below. One list entry per distinct \
-unsupported claim.
+inline citation [n] pointing to a real source below. Only include a claim here if you \
+can identify the SPECIFIC sentence making it and confirm none of the numbered sources \
+actually support it. If every claim is backed by at least one matching source, this \
+list MUST be empty - do not add vague, minor, or borderline entries just to have \
+something to report.
 - missing_parts: every distinct part of the user's question the draft does not \
-address. One list entry per distinct missing part.
+address. Only include a part here if the user's question genuinely asked for it and \
+the draft says nothing about it at all. If the draft addresses everything asked, this \
+list MUST be empty.
 - contradictions: every place where the draft contradicts itself or is illogically \
-structured. One list entry per distinct contradiction.
+structured. Only include an entry here if you can point to two specific statements \
+that actually conflict, or a structural break severe enough to confuse a reader. If \
+the draft is internally consistent, this list MUST be empty.
+
+A genuinely well-cited, complete, coherent draft should produce three empty lists - \
+do not manufacture issues just to avoid returning empty lists.
 
 Return ONLY valid JSON, no other text, in exactly this format:
 {{"unsupported_claims": [<string>, ...], "missing_parts": [<string>, ...], \
