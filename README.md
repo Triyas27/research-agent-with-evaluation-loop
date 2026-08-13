@@ -184,18 +184,31 @@ matched — timeout and cost-cap runs were silently logged as `success`. Fixed b
 all state decisions into `draft_node`/`critic_node` (real nodes); the routing functions
 now only read already-committed state.
 
-## How the loop works
+## Architecture
 
-```
-query
-  → worker drafts (search + write, with inline citations)
-  → search or draft failed?  → return fallback message, log as tool_failure, stop
-  → critic scores 0-10 (grounding /4, completeness /3, coherence /3) + feedback
-  → critic failed?  → return current draft, log as tool_failure, stop
-  → score >= threshold?  → return report, log as success
-  → timeout exceeded, or cost cap hit, or max iterations reached?
-      → return best-scoring draft seen, log status accordingly
-  → else  → worker revises using critic feedback → back to critic
+The graph below is the actual LangGraph structure in `main.py` — three nodes
+(`search_node`, `draft_node`, `critic_node`) and the conditional routing between
+them. One thing the diagram makes visible that's easy to miss reading the code
+top-to-bottom: exhausting `MAX_ITERATIONS` without ever clearing `SCORE_THRESHOLD`
+still logs as `status: success`, not a distinct bucket — `_classify_status` only
+special-cases `timeout`/`cost_cap`/`tool_failure`, so "gave up after 3 tries, still
+scored 4/10" and "cleared the bar" look identical in the log's `status` column
+(the `final_score` column is where you'd actually notice the difference).
+
+```mermaid
+flowchart TD
+    Start(["POST /research"]) --> Search["search_node<br/>Tavily, up to 8 results"]
+    Search -- "search_failed" --> ToolFail(["status: tool_failure<br/>fallback message, HTTP 200"])
+    Search -- "results found" --> Draft["draft_node<br/>Groq: write (iter 1) or revise (iter 2+)"]
+    Draft -- "draft_failed, or no sources" --> ToolFail
+    Draft -- "drafted" --> Critic["critic_node<br/>Groq: count unsupported claims,<br/>missing parts, contradictions"]
+    Critic -- "critic_failed<br/>e.g. malformed JSON" --> ToolFail
+    Critic --> Decide{"stop condition met?"}
+    Decide -- "score >= SCORE_THRESHOLD (7)" --> Success(["status: success<br/>return report"])
+    Decide -- "60s elapsed<br/>TIMEOUT_SECONDS" --> Timeout(["status: timeout<br/>return best draft seen"])
+    Decide -- "$0.05 spent<br/>MAX_COST_USD" --> CostCap(["status: cost_cap<br/>return best draft seen"])
+    Decide -- "3 iterations done<br/>MAX_ITERATIONS, score still low" --> MaxIter(["status: success (!)<br/>return best draft anyway"])
+    Decide -- "else, keep trying" --> Draft
 ```
 
 ## Deployment (Render)
